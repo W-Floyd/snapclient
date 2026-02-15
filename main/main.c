@@ -88,6 +88,7 @@ const char *VERSION_STRING = "0.0.3";
 #define OTA_TASK_CORE_ID tskNO_AFFINITY
 // 1  // tskNO_AFFINITY
 
+TaskHandle_t t_main_task = NULL;
 TaskHandle_t t_ota_task = NULL;
 TaskHandle_t t_http_get_task = NULL;
 
@@ -104,16 +105,19 @@ static const char *TAG = "SC";
 SemaphoreHandle_t timeSyncSemaphoreHandle = NULL;
 
 SemaphoreHandle_t idCounterSemaphoreHandle = NULL;
+SemaphoreHandle_t playerStateChangedMutex = NULL;
 
 typedef struct audioDACdata_s {
-  bool mute;
+  bool playerMute;
+  bool stateMute;
   int volume;
-  bool enabled;
 } audioDACdata_t;
 
 static audioDACdata_t audioDAC_data;
 static QueueHandle_t audioDACQHdl = NULL;
 static SemaphoreHandle_t audioDACSemaphore = NULL;
+static void (*set_volume_cb)(int volume);
+static void (*set_mute_cb)(bool mute, bool set_state);
 
 void time_sync_msg_cb(void *args);
 
@@ -498,49 +502,12 @@ void error_callback(const FLAC__StreamDecoder *decoder,
 /**
  *
  */
-void init_snapcast(QueueHandle_t audioQHdl) {
-  audioDACQHdl = audioQHdl;
-  audioDACSemaphore = xSemaphoreCreateMutex();
-  audioDAC_data.mute = true;
-  audioDAC_data.volume = -1;
-  audioDAC_data.enabled = false;
+void init_snapcast(void (*set_volume)(int), void (*set_mute)(bool, bool)) {
+  set_volume_cb = set_volume;
+  set_mute_cb = set_mute;
 }
 
-/**
- *
- */
-void audio_dac_enable(bool enabled) {
-  xSemaphoreTake(audioDACSemaphore, portMAX_DELAY);
-  if (enabled != audioDAC_data.enabled) {
-    audioDAC_data.enabled = enabled;
-    xQueueOverwrite(audioDACQHdl, &audioDAC_data);
-  }
-  xSemaphoreGive(audioDACSemaphore);
-}
 
-/**
- *
- */
-void audio_set_mute(bool mute) {
-  xSemaphoreTake(audioDACSemaphore, portMAX_DELAY);
-  if (mute != audioDAC_data.mute) {
-    audioDAC_data.mute = mute;
-    xQueueOverwrite(audioDACQHdl, &audioDAC_data);
-  }
-  xSemaphoreGive(audioDACSemaphore);
-}
-
-/**
- *
- */
-void audio_set_volume(int volume) {
-  xSemaphoreTake(audioDACSemaphore, portMAX_DELAY);
-  if (volume != audioDAC_data.volume) {
-    audioDAC_data.volume = volume;
-    xQueueOverwrite(audioDACQHdl, &audioDAC_data);
-  }
-  xSemaphoreGive(audioDACSemaphore);
-}
 
 /**
  *
@@ -548,6 +515,7 @@ void audio_set_volume(int volume) {
 int server_settings_msg_received(
     server_settings_message_t *server_settings_message,
     snapcastSetting_t *scSet) {
+  static int volume = 0;
   // log mute state, buffer, latency
   ESP_LOGI(TAG, "Buffer length:  %ld", server_settings_message->buffer_ms);
   ESP_LOGI(TAG, "Latency:        %ld", server_settings_message->latency);
@@ -564,30 +532,34 @@ int server_settings_msg_received(
       dsp_processor_set_volome((double)server_settings_message->volume / 100);
     }
 #endif
-    audio_set_mute(server_settings_message->muted);
+    set_mute_cb(server_settings_message->muted, true);
   }
 
-  if (scSet->volume != server_settings_message->volume) {
+  if (volume != server_settings_message->volume) {
 #if SNAPCAST_USE_SOFT_VOL
     if (!server_settings_message->muted) {
       dsp_processor_set_volome((double)server_settings_message->volume / 100);
     }
 #else
-    audio_set_volume(server_settings_message->volume);
+    set_volume_cb(server_settings_message->volume);
 #endif
   }
 
-  scSet->cDacLat_ms = server_settings_message->latency;
-  scSet->buf_ms = server_settings_message->buffer_ms;
   scSet->muted = server_settings_message->muted;
-  scSet->volume = server_settings_message->volume;
+  volume = server_settings_message->volume;
 
-  if (player_send_snapcast_setting(scSet) != pdPASS) {
-    ESP_LOGE(TAG,
-             "Failed to notify sync task. "
-             "Did you init player?");
+  if (scSet->cDacLat_ms != server_settings_message->latency ||
+      scSet->buf_ms != server_settings_message->buffer_ms) {
+    scSet->cDacLat_ms = server_settings_message->latency;
+    scSet->buf_ms = server_settings_message->buffer_ms;
+
+    if (player_send_snapcast_setting(scSet) != pdPASS) {
+      ESP_LOGE(TAG,
+               "Failed to notify sync task. "
+               "Did you init player?");
 
     return -1;  // fatal, this triggers return from http_get_task
+    }
   }
   return 0;
 }
@@ -991,7 +963,7 @@ int handle_chunk_message(codec_type_t codec, snapcastSetting_t *scSet,
 int process_data(snapcast_protocol_parser_t *parser,
                  time_sync_data_t *time_sync_data, bool *received_codec_header,
                  codec_type_t *codec, snapcastSetting_t *scSet,
-                 pcm_chunk_message_t **pcmData) {
+                 pcm_chunk_message_t **pcmData, bool paused) {
   base_message_t base_message_rx;
 
   if (parse_base_message(parser, &base_message_rx) == PARSER_COMPLETE) {
@@ -1011,6 +983,17 @@ int process_data(snapcast_protocol_parser_t *parser,
                                        *received_codec_header, *codec, pcmData,
                                        &wire_chnk, &decoderChunk)) {
         case PARSER_COMPLETE: {
+          if (paused) {
+            if (*pcmData != NULL) {
+              free_pcm_chunk(*pcmData);
+              *pcmData = NULL;
+            }
+            if (decoderChunk.inData != NULL) {
+              free(decoderChunk.inData);
+              decoderChunk.inData = NULL;
+            }
+            break;
+          }
           if (handle_chunk_message(*codec, scSet, pcmData, &wire_chnk) != 0) {
             return -1;
           }
@@ -1140,6 +1123,12 @@ void before_receive_callback(before_receive_callback_data_t *data) {
   }
 }
 
+
+void http_player_state_changed() {
+  xTaskNotifyGive(t_http_get_task);
+  //ESP_LOGI(TAG, "http task cb");
+}
+
 /**
  *
  */
@@ -1161,6 +1150,7 @@ static void http_get_task(void *pvParameters) {
   codec_type_t codec = NONE;
   snapcastSetting_t scSet;
   pcm_chunk_message_t *pcmData = NULL;
+  bool paused = false;
 
   // create a timer to send time sync messages every x µs
 //  esp_timer_create(&tSyncArgs, &time_sync_data.timeSyncMessageTimer);
@@ -1171,6 +1161,8 @@ static void http_get_task(void *pvParameters) {
 
     return;
   }
+
+  add_player_state_cb(http_player_state_changed);
 
   while (1) {
     // do some house keeping
@@ -1304,7 +1296,6 @@ static void http_get_task(void *pvParameters) {
     scSet.ch = 2;
     scSet.sr = 44100;
     scSet.chkInFrames = 0;
-    scSet.volume = 0;
     scSet.muted = true;
 
     snapcast_protocol_parser_t parser;
@@ -1335,9 +1326,14 @@ static void http_get_task(void *pvParameters) {
 
     // Main connection loop - state machine + data processing
     while (1) {
+      if (ulTaskNotifyTake(pdTRUE, 1) == pdTRUE) {
+        // state change, e.g. pause/play
+        paused = get_player_state() == PAUSED;
+      //ESP_LOGI(TAG, "http got cb. %s", paused ? "paused" : "playing/idle");
+      }
       int result =
           process_data(&parser, &time_sync_data, &received_codec_header, &codec,
-                       &scSet, &pcmData);
+                       &scSet, &pcmData, paused);
       if (result == -1) {
         return;  // critical error in data processing
       } else if (result == -2) {
@@ -1350,38 +1346,63 @@ static void http_get_task(void *pvParameters) {
 /**
  *
  */
-static void dac_control_task(audio_board_handle_t board_handle,
-                             QueueHandle_t audioQHdl) {
-  audioDACdata_t dac_data;
-  audioDACdata_t dac_data_old = {
-      .mute = true,
+static void dac_control(audio_board_handle_t board_handle,
+                             audioDACdata_t dac_data) {
+  static audioDACdata_t dac_data_old = {
+      .playerMute = true,
+      .stateMute = true,
       .volume = -1,
-      .enabled = false,
   };
+  static bool muted = true;
   // TODO: can and should we pass audio_hal_handle_t instead of
   // audio_board_handle_t?
-  while (1) {
-    if (xQueueReceive(audioQHdl, &dac_data, portMAX_DELAY) == pdTRUE) {
-      if (dac_data.mute != dac_data_old.mute) {
-        audio_hal_set_mute(board_handle->audio_hal, dac_data.mute);
-      }
-      if (dac_data.volume != dac_data_old.volume) {
-        audio_hal_set_volume(board_handle->audio_hal, dac_data.volume);
-      }
-      if (dac_data.enabled != dac_data_old.enabled) {
-        if (dac_data.enabled) {
-          audio_hal_ctrl_codec(board_handle->audio_hal,
-                               AUDIO_HAL_CODEC_MODE_DECODE,
-                               AUDIO_HAL_CTRL_START);
-        } else {
-          audio_hal_ctrl_codec(board_handle->audio_hal,
-                               AUDIO_HAL_CODEC_MODE_DECODE,
-                               AUDIO_HAL_CTRL_STOP);
-        }
-      }
-      dac_data_old = dac_data;
+  if (dac_data.playerMute != dac_data_old.playerMute ||
+      dac_data.stateMute != dac_data_old.stateMute) {
+    bool mute = dac_data.playerMute || dac_data.stateMute;
+    if (mute != muted) {
+      muted = mute;
+      audio_hal_set_mute(board_handle->audio_hal, muted);
     }
   }
+  if (dac_data.volume != dac_data_old.volume) {
+    audio_hal_set_volume(board_handle->audio_hal, dac_data.volume);
+  }
+    dac_data_old = dac_data;
+}
+
+/**
+ *
+ */
+void audio_set_mute(bool mute, bool set_state) {
+  xSemaphoreTake(audioDACSemaphore, portMAX_DELAY);
+  if (set_state && (mute != audioDAC_data.stateMute)) {
+    audioDAC_data.stateMute = mute;
+    xQueueOverwrite(audioDACQHdl, &audioDAC_data);
+  }
+  if (!set_state && mute != audioDAC_data.playerMute) {
+    audioDAC_data.playerMute = mute;
+    xQueueOverwrite(audioDACQHdl, &audioDAC_data);
+  }
+  xSemaphoreGive(audioDACSemaphore);
+}
+
+/**
+ *
+ */
+void audio_set_volume(int volume) {
+  xSemaphoreTake(audioDACSemaphore, portMAX_DELAY);
+  if (volume != audioDAC_data.volume) {
+    audioDAC_data.volume = volume;
+    xQueueOverwrite(audioDACQHdl, &audioDAC_data);
+  }
+  xSemaphoreGive(audioDACSemaphore);
+}
+
+void player_state_changed() {
+  if (playerStateChangedMutex != NULL) {
+    xSemaphoreGive(playerStateChangedMutex);
+  }
+  ESP_LOGI(TAG, "main task cb");
 }
 
 /**
@@ -1412,6 +1433,8 @@ void app_main(void) {
   esp_log_level_set("dsp_settings", ESP_LOG_DEBUG);
   esp_log_level_set("UI_HTTP", ESP_LOG_WARN);
   esp_log_level_set("dspProc", ESP_LOG_DEBUG);
+
+  t_main_task = xTaskGetCurrentTaskHandle();
 
 #if CONFIG_SNAPCLIENT_USE_INTERNAL_ETHERNET || \
     CONFIG_SNAPCLIENT_USE_SPI_ETHERNET
@@ -1542,10 +1565,22 @@ void app_main(void) {
           },
   };
 
-  QueueHandle_t audioQHdl = xQueueCreate(1, sizeof(audioDACdata_t));
+  audioDACQHdl = xQueueCreate(1, sizeof(audioDACdata_t));
+  audioDACSemaphore = xSemaphoreCreateMutex();
+  audioDAC_data.stateMute = true;
+  audioDAC_data.playerMute = true;
+  audioDAC_data.volume = -1;
 
-  init_snapcast(audioQHdl);
-  init_player(i2s_pin_config0, I2S_NUM_0);
+  init_snapcast(audio_set_volume, audio_set_mute);
+  init_player(i2s_pin_config0, I2S_NUM_0, audio_set_mute);
+  add_player_state_cb(player_state_changed);
+
+  // Create binary semaphore for player state change notification
+  playerStateChangedMutex = xSemaphoreCreateBinary();
+  if (playerStateChangedMutex == NULL) {
+    ESP_LOGE(TAG, "Failed to create playerStateChangedMutex");
+    return;
+  }
 
   #if CONFIG_DAC_TAS5805M
   // Apply persisted TAS5805M settings now that the codec has been initialized
@@ -1614,6 +1649,35 @@ void app_main(void) {
   };
   esp_pm_configure(&pmConfig);
 #endif
-
-  dac_control_task(board_handle, audioQHdl);
+  audioDACdata_t dac_data;
+  player_state_e state = IDLE;
+  int counter = 0;
+  while (1) {
+    if (xQueueReceive(audioDACQHdl, &dac_data, pdMS_TO_TICKS(100)) == pdTRUE) {
+      dac_control(board_handle, dac_data);
+    }
+    if (xSemaphoreTake(playerStateChangedMutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+      player_state_e state_new = get_player_state();
+      ESP_LOGI(TAG, "main got cb: %d", state_new);
+      if (state_new != state) {
+        ESP_LOGI(TAG, "Player state changed: %d -> %d", state, state_new);
+        if (state_new == PLAYING) {
+          audio_hal_ctrl_codec(board_handle->audio_hal,
+                                AUDIO_HAL_CODEC_MODE_DECODE,
+                                AUDIO_HAL_CTRL_START);
+        } else if (state == PLAYING) {
+          audio_hal_ctrl_codec(board_handle->audio_hal,
+                                AUDIO_HAL_CODEC_MODE_DECODE,
+                                AUDIO_HAL_CTRL_STOP);
+        }
+        state = state_new;
+      }
+    }
+    // test pause/play toggle every 200 loops
+    // counter++;
+    // if (counter % 200 == 0) {
+    //   ESP_LOGI(TAG, "toggle pause: %d", state == PLAYING);
+    //   pause_player(state == PLAYING);
+    // }
+  }
 }
