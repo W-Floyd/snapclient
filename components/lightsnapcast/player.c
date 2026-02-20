@@ -130,7 +130,7 @@ typedef struct state_cb_s {
 
 static state_cb_t *state_cb_head = NULL;
 
-static void (*audio_set_mute)(bool mute, bool set_state);
+static void (*audio_set_mute)(bool mute);
 
 static i2s_chan_handle_t tx_chan = NULL;  // I2S tx channel handler
 static bool i2sEnabled = false;
@@ -400,9 +400,11 @@ int deinit_player(void) {
   // must disable i2s before stopping player task or it will hang
   my_i2s_channel_disable(tx_chan);
 
-  if (playerStateMux != NULL) {
-    xSemaphoreTake(playerStateMux, pdMS_TO_TICKS(10000));
-  }
+  //don't take playerStateMux here, otherwise we might block player task from stopping
+  //if (playerStateMux != NULL) {
+  //  xSemaphoreTake(playerStateMux, pdMS_TO_TICKS(10000));
+  //}
+
   //wait max 10s for task to stop itself
   for(int i = 0; i< 100; i++) {
     if (playerStarted) {
@@ -461,8 +463,12 @@ int deinit_player(void) {
 /**
  *  call before http task creation!
  */
-int init_player(i2s_std_gpio_config_t pin_config0_, i2s_port_t i2sNum_, void (*set_mute_cb)(bool, bool)) {
+int init_player(i2s_std_gpio_config_t pin_config0_, i2s_port_t i2sNum_, void (*set_mute_cb)(bool)) {
   int ret = 0;
+  if (set_mute_cb == NULL) {
+    ESP_LOGE(TAG, "set_mute_cb is NULL");
+    return -1;
+  }
   audio_set_mute = set_mute_cb;
 
   deinit_player();
@@ -1529,7 +1535,7 @@ static void player_task(void *pvParameters) {
   
   //audio_hal_ctrl_codec(audio_hal_handle_t audio_hal, audio_hal_codec_mode_t mode, audio_hal_ctrl_t audio_hal_ctrl)
 
-  audio_set_mute(true, false);
+  audio_set_mute(true);
 
   buf_us = (int64_t)(scSet.buf_ms) * 1000LL;
   clientDacLatency_us = (int64_t)scSet.cDacLat_ms * 1000LL;
@@ -1555,7 +1561,7 @@ static void player_task(void *pvParameters) {
 //
 //    ESP_LOGI(TAG, "created new queue with %d", entries);
 //  }
-  audio_set_mute(false, false);
+  audio_set_mute(false);
 
   // wait for early time syncs to be ready
   xSemaphoreTake(latencyBufFullSemaphoreHandle, portMAX_DELAY);
@@ -1590,7 +1596,7 @@ static void player_task(void *pvParameters) {
         if ((scSet.sr != __scSet.sr) || (scSet.bits != __scSet.bits) ||
             (scSet.ch != __scSet.ch)) {
           my_i2s_channel_enable(tx_chan);
-          audio_set_mute(true, false);
+          audio_set_mute(true);
           my_i2s_channel_disable(tx_chan);
 
           ret = player_setup_i2s(&__scSet);
@@ -1640,7 +1646,7 @@ static void player_task(void *pvParameters) {
                    __scSet.buf_ms, __scSet.chkInFrames, __scSet.sr, __scSet.ch,
                    __scSet.bits, __scSet.cDacLat_ms);
         }
-        audio_set_mute(false, false);
+        audio_set_mute(false);
 
         scSet = __scSet;  // store for next round
 
@@ -1787,7 +1793,7 @@ static void player_task(void *pvParameters) {
 
           // TODO: use a timer to un-mute non blocking
           vTaskDelay(pdMS_TO_TICKS(2));
-          audio_set_mute(false, false);
+          audio_set_mute(false);
 
           ESP_LOGI(TAG, "initial sync age: %lldus, chunk duration: %lldus", age,
                    chunkDuration_us);
@@ -1832,7 +1838,7 @@ static void player_task(void *pvParameters) {
 
           insertedSamplesCounter = 0;
 
-          audio_set_mute(true, false);
+          audio_set_mute(true);
 
           my_i2s_channel_disable(tx_chan);
 
@@ -2088,7 +2094,7 @@ static void player_task(void *pvParameters) {
 
             my_gptimer_stop(gptimer);
 
-            audio_set_mute(true, false);
+            audio_set_mute(true);
 
             my_i2s_channel_disable(tx_chan);
 
@@ -2178,7 +2184,7 @@ static void player_task(void *pvParameters) {
       dir = 0;
       initialSync = 0;
 
-      audio_set_mute(true, false);
+      audio_set_mute(true);
       my_i2s_channel_disable(tx_chan);
       i2s_del_channel(tx_chan);
       tx_chan = NULL;
@@ -2186,7 +2192,7 @@ static void player_task(void *pvParameters) {
       break;
     }
     if (ulTaskNotifyTakeIndexed(1, pdTRUE, 0) == pdTRUE) {
-      audio_set_mute(true, false);
+      audio_set_mute(true);
       my_i2s_channel_disable(tx_chan);
       i2s_del_channel(tx_chan);
       tx_chan = NULL;
