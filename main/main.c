@@ -12,6 +12,14 @@
 #include "net_functions.h"
 #include "network_interface.h"
 #include "nvs_flash.h"
+#if 0
+#include "esp_bt.h"
+#include "esp_bt_main.h"
+#include "esp_bt_device.h"
+#include "esp_gap_bt_api.h"
+#include "esp_a2dp_api.h"
+#include "esp_avrc_api.h"
+#endif
 
 #include <sys/time.h>
 
@@ -124,6 +132,63 @@ void player_state_changed() {
   ESP_LOGI(TAG, "main task cb");
 }
 
+
+void log_mem() {
+  multi_heap_info_t info;
+  heap_caps_get_info(&info, MALLOC_CAP_8BIT);
+  ESP_LOGI(TAG, "Largest free block: %d bytes", info.largest_free_block);
+  ESP_LOGI(TAG, "Total free heap: %d bytes", info.total_free_bytes);
+  ESP_LOGI(TAG, "Minimum free heap ever: %d bytes", info.minimum_free_bytes);
+}
+
+#if 0
+static void bt_app_gap_cb(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t *param)
+{
+    switch (event) {
+        case ESP_BT_GAP_PIN_REQ_EVT: {
+          ESP_LOGI(TAG, "ESP_BT_GAP_PIN_REQ_EVT min_16_digit:%d", param->pin_req.min_16_digit);
+          if (param->pin_req.min_16_digit) {
+              ESP_LOGI(TAG, "Input pin code: 0000 0000 0000 0000");
+              esp_bt_pin_code_t pin_code = {1};
+              esp_bt_gap_pin_reply(param->pin_req.bda, true, 16, pin_code);
+          } else {
+              ESP_LOGI(TAG, "Input pin code: 1234");
+              esp_bt_pin_code_t pin_code;
+              pin_code[0] = '6';
+              pin_code[1] = '6';
+              pin_code[2] = '6';
+              pin_code[3] = '6';
+              esp_bt_gap_pin_reply(param->pin_req.bda, true, 4, pin_code);
+          }
+          break;
+        }
+        case ESP_BT_GAP_AUTH_CMPL_EVT: {
+            if (param->auth_cmpl.stat == ESP_BT_STATUS_SUCCESS) {
+                ESP_LOGI(TAG, "Authentication success: %s", param->auth_cmpl.device_name);
+            } else {
+                ESP_LOGE(TAG, "Authentication failed, status: %d", param->auth_cmpl.stat);
+            }
+            break;
+        }
+        case ESP_BT_GAP_CFM_REQ_EVT:
+            ESP_LOGI(TAG, "ESP_BT_GAP_CFM_REQ_EVT Please compare the numeric value: %06"PRIu32, param->cfm_req.num_val);
+            esp_bt_gap_ssp_confirm_reply(param->cfm_req.bda, true);
+            break;
+        case ESP_BT_GAP_KEY_NOTIF_EVT:
+            ESP_LOGI(TAG, "ESP_BT_GAP_KEY_NOTIF_EVT passkey:%06"PRIu32, param->key_notif.passkey);
+            break;
+        case ESP_BT_GAP_KEY_REQ_EVT:
+            ESP_LOGI(TAG, "ESP_BT_GAP_KEY_REQ_EVT Please enter passkey!");
+            break;
+        case ESP_BT_GAP_MODE_CHG_EVT:
+            ESP_LOGI(TAG, "ESP_BT_GAP_MODE_CHG_EVT mode:%d", param->mode_chg.mode);
+            break;
+        default:
+            break;
+    }
+}
+#endif
+
 /**
  *
  */
@@ -136,7 +201,6 @@ void app_main(void) {
   }
 //  ESP_ERROR_CHECK(nvs_flash_erase());
   ESP_ERROR_CHECK(ret);
-
   esp_log_level_set("*", ESP_LOG_INFO);
 
   // if enabled these cause a timer srv stack overflow
@@ -152,6 +216,7 @@ void app_main(void) {
   esp_log_level_set("dsp_settings", ESP_LOG_DEBUG);
   esp_log_level_set("UI_HTTP", ESP_LOG_WARN);
   esp_log_level_set("dspProc", ESP_LOG_DEBUG);
+  log_mem();
 
   t_main_task = xTaskGetCurrentTaskHandle();
 
@@ -306,7 +371,6 @@ void app_main(void) {
     ESP_LOGW(TAG, "Failed to init persisted TAS5805M settings");
   }
   #endif
-
   network_if_init();
 
   // Initialize settings manager (hostname + snapserver settings)
@@ -319,7 +383,7 @@ void app_main(void) {
   }
   ESP_LOGI(TAG, "Device hostname: %s", mdns_hostname);
 
-  init_http_server_task();
+  //init_http_server_task();
 
   // Enable websocket server
   //  ESP_LOGI(TAG, "Setup ws server");
@@ -332,7 +396,7 @@ void app_main(void) {
 
 #if CONFIG_USE_DSP_PROCESSOR
   dsp_processor_init();  // Must init processor first (creates mutexes/semaphores)
-  dsp_settings_init();   // Then settings can restore params into the processor
+  //dsp_settings_init();   // Then settings can restore params into the processor
 #endif
 
   xTaskCreatePinnedToCore(&ota_server_task, "ota", 14 * 256, NULL,
@@ -351,7 +415,71 @@ void app_main(void) {
   //      continue;
   //    }
   //  }
+#if 0
+    esp_bt_controller_mem_release(ESP_BT_MODE_BLE);
+    esp_bt_mem_release(ESP_BT_MODE_BLE);
+    esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
+    ESP_LOGI(TAG, "BT Controller status before init: %d", esp_bt_controller_get_status());
 
+    esp_err_t err;
+    if ((err = esp_bt_controller_init(&bt_cfg)) != ESP_OK) {
+        ESP_LOGE(TAG, "%s initialize controller failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+
+    if ((err = esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT)) != ESP_OK) {
+        ESP_LOGE(TAG, "%s enable controller failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+
+    esp_bluedroid_config_t bluedroid_cfg = BT_BLUEDROID_INIT_CONFIG_DEFAULT();
+    if ((err = esp_bluedroid_init_with_cfg(&bluedroid_cfg)) != ESP_OK) {
+        ESP_LOGE(TAG, "%s initialize bluedroid failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+    if ((err = esp_bluedroid_enable()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s enable bluedroid failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+    /* Set default parameters for Secure Simple Pairing */
+    esp_bt_sp_param_t param_type = ESP_BT_SP_IOCAP_MODE;
+    esp_bt_io_cap_t iocap = ESP_BT_IO_CAP_IO;
+    esp_bt_gap_set_security_param(param_type, &iocap, sizeof(uint8_t));
+
+    esp_bt_dev_set_device_name("test_client");
+    esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
+    esp_bt_gap_register_callback(&bt_app_gap_cb);
+    /*
+     * Set default parameters for Legacy Pairing
+     * Use variable pin, input pin code when pairing
+     */
+    esp_bt_pin_type_t pin_type = ESP_BT_PIN_TYPE_VARIABLE;
+    esp_bt_pin_code_t pin_code;
+    esp_bt_gap_set_pin(pin_type, 0, pin_code);
+
+    //shutdown bluetooth to save power, we don't need it for now and it causes some issues with wifi
+    if ((err = esp_bluedroid_disable()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s disable bluedroid failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100)); // give some time for bluedroid to shutdown before deinit
+    if ((err = esp_bluedroid_deinit()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s deinit bluedroid failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100)); // give some time for bluedroid to shutdown before deinit
+
+    if ((err = esp_bt_controller_disable()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s disable controller failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100)); // give some time for bluedroid to shutdown before deinit
+    if ((err = esp_bt_controller_deinit()) != ESP_OK) {
+        ESP_LOGE(TAG, "%s deinit controller failed: %s\n", __func__, esp_err_to_name(err));
+        return;
+    }
+    vTaskDelay(pdMS_TO_TICKS(100)); // give some time for bluedroid to shutdown before deinit
+#endif
 #if CONFIG_PM_ENABLE
   // Configure dynamic frequency scaling:
   // automatic light sleep is enabled if tickless idle support is enabled.
@@ -389,10 +517,12 @@ void app_main(void) {
       }
     }
     // test pause/play toggle every 200 loops
-    // counter++;
-    // if (counter % 200 == 0) {
-    //   ESP_LOGI(TAG, "toggle pause: %d", state == PLAYING);
-    //   pause_player(state == PLAYING);
-    // }
+    counter++;
+    if (counter % 100 == 0) {
+      //ESP_LOGI(TAG, "toggle pause: %d", state == PLAYING);
+      //pause_player(state == PLAYING);
+      log_mem();
+    }
   }
 }
+

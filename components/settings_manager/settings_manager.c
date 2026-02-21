@@ -238,7 +238,7 @@ esp_err_t settings_get_mdns_enabled(bool *enabled) {
 #ifndef CONFIG_SNAPSERVER_USE_MDNS
     *enabled = false;
 #else
-    *enabled = true;
+    *enabled = CONFIG_SNAPSERVER_USE_MDNS;
 #endif
     ESP_LOGD(TAG, "%s: mdns from CONFIG_SNAPSERVER_USE_MDNS: %d", __func__, *enabled ? 1 : 0);
     xSemaphoreGive(hostname_mutex);

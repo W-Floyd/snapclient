@@ -3,10 +3,19 @@
 #include "esp_log.h"
 #include "lwip/err.h"
 #include "lwip/netdb.h"
+#ifdef CONFIG_SNAPSERVER_USE_MDNS
 #include "mdns.h"
+#endif
+#ifdef HAS_NET_F
 #include "net_functions.h"
+#endif
+#ifdef HAS_NET_IF
 #include "network_interface.h"
+#endif
+#ifdef HAS_SETTINGS_MANAGER
 #include "settings_manager.h"
+#endif
+#include "snapclient_settings.h"
 
 // External variable that need to be accessible
 extern struct netconn* lwipNetconn;
@@ -34,7 +43,7 @@ void setup_network(esp_netif_t** netif) {
     while (1) {
 #if CONFIG_SNAPCLIENT_USE_INTERNAL_ETHERNET || \
     CONFIG_SNAPCLIENT_USE_SPI_ETHERNET
-      bool ethUp = network_is_netif_up(eth_netif);
+      bool ethUp = esp_netif_is_netif_up(eth_netif);
 
       if (ethUp) {
         *netif = eth_netif;
@@ -43,7 +52,7 @@ void setup_network(esp_netif_t** netif) {
       }
 #endif
 
-      bool staUp = network_is_netif_up(sta_netif);
+      bool staUp = esp_netif_is_netif_up(sta_netif);
       if (staUp) {
         *netif = sta_netif;
 
@@ -75,7 +84,6 @@ void setup_network(esp_netif_t** netif) {
 #if CONFIG_SNAPSERVER_USE_MDNS
       ESP_LOGI(TAG, "Enable mdns");
       mdns_init();
-#endif
       // Find snapcast server via mDNS
       mdns_result_t* r = NULL;
       esp_err_t err = 0;
@@ -93,9 +101,11 @@ void setup_network(esp_netif_t** netif) {
         }
       }
 
+#ifdef HAS_NET_F
       ESP_LOGI(TAG, "\n~~~~~~~~~~ MDNS Query success ~~~~~~~~~~");
       mdns_print_results(r);
       ESP_LOGI(TAG, "~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n");
+#endif
 
       mdns_result_t* re = r;
       while (re) {
@@ -137,6 +147,7 @@ void setup_network(esp_netif_t** netif) {
 
       ESP_LOGI(TAG, "Found %s:%d", ipaddr_ntoa(&remote_ip), remotePort);
     } else {
+#endif
       // Use static server configuration from settings_manager
       char static_host[128] = {0};
       int32_t static_port = 0;
@@ -199,7 +210,7 @@ void setup_network(esp_netif_t** netif) {
     uint8_t netifIdx = esp_netif_get_netif_impl_index(*netif);
     rc1 = netconn_bind_if(lwipNetconn, netifIdx);
     if (rc1 != ERR_OK) {
-      ESP_LOGE(TAG, "can't bind interface %s", network_get_ifkey(*netif));
+      ESP_LOGE(TAG, "can't bind interface %s", esp_netif_get_ifkey(*netif));
     }
 #else  // use IP to bind connection
     if (remote_ip.type == IPADDR_TYPE_V4) {
@@ -233,7 +244,7 @@ void setup_network(esp_netif_t** netif) {
       continue;
     }
 
-    ESP_LOGI(TAG, "netconn connected using %s", network_get_ifkey(*netif));
+    ESP_LOGI(TAG, "netconn connected using %s", esp_netif_get_ifkey(*netif));
     break;  // SUCCESS
   }
 }
@@ -292,7 +303,7 @@ static int receive_data(struct netbuf** firstNetBuf, bool isMuted,
         network_get_netif_from_desc(NETWORK_INTERFACE_DESC_ETH);
 
     if (netif != eth_netif) {
-      bool ethUp = network_is_netif_up(eth_netif);
+      bool ethUp = esp_netif_is_netif_up(eth_netif);
 
       if (ethUp) {
         netconn_close(lwipNetconn);
