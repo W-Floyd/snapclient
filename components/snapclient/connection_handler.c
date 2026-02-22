@@ -15,7 +15,7 @@
 #ifdef HAS_SETTINGS_MANAGER
 #include "settings_manager.h"
 #endif
-#include "snapclient_settings.h"
+#include "snapclient_helper.h"
 
 // External variable that need to be accessible
 extern struct netconn* lwipNetconn;

@@ -1,4 +1,4 @@
-idf_component_register(SRCS "snapclient.c" "connection_handler.c"
+idf_component_register(SRCS "snapclient_helper.c" "snapclient.c" "connection_handler.c"
                        INCLUDE_DIRS "include"
 
                        PRIV_REQUIRES esp_timer opus flac lightsnapcast

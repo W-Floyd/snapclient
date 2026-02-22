@@ -1,10 +1,4 @@
-#ifndef __SNAPCLIENT_SETTINGS_H__
-#define __SNAPCLIENT_SETTINGS_H__
-
-#ifdef __cplusplus
-extern "C" {
-#endif
-
+#include "snapclient_helper.h"
 #include "esp_netif.h"
 //#include <stdbool.h>
 
@@ -55,8 +49,6 @@ esp_err_t settings_get_hostname(char *hostname, size_t max_len) {
 
 // provide few functions to avoid including the whole network_interface component
 #ifndef HAS_NET_IF
-#define NETWORK_INTERFACE_DESC_STA "sta"
-#define NETWORK_INTERFACE_DESC_ETH "eth"
 
 static bool netif_desc_matches_with(esp_netif_t *netif, void *ctx) {
   return strcmp(ctx, esp_netif_get_desc(netif)) == 0;
@@ -68,9 +60,3 @@ esp_netif_t *network_get_netif_from_desc(const char *desc) {
   return esp_netif_find_if(netif_desc_matches_with, (void *)desc);
 }
 #endif
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif // __SNAPCLIENT_SETTINGS_H__
