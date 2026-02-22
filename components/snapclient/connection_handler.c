@@ -3,7 +3,7 @@
 #include "esp_log.h"
 #include "lwip/err.h"
 #include "lwip/netdb.h"
-#ifdef CONFIG_SNAPSERVER_USE_MDNS
+#if CONFIG_SNAPSERVER_USE_MDNS
 #include "mdns.h"
 #endif
 #ifdef HAS_NET_F
