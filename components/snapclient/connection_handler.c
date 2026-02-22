@@ -183,6 +183,7 @@ void setup_network(esp_netif_t** netif) {
                ipaddr_ntoa(&remote_ip), remotePort);
     }
 
+#if CONFIG_LWIP_IPV6 && CONFIG_LWIP_IPV4
     if (remote_ip.type == IPADDR_TYPE_V4) {
       lwipNetconn = netconn_new(NETCONN_TCP);
 
@@ -195,6 +196,15 @@ void setup_network(esp_netif_t** netif) {
       ESP_LOGW(TAG, "remote IP has unsupported IP type");
       continue;
     }
+#else
+#if CONFIG_LWIP_IPV4
+    lwipNetconn = netconn_new(NETCONN_TCP);
+    ESP_LOGV(TAG, "netconn using IPv4");
+#elif CONFIG_LWIP_IPV6
+    lwipNetconn = netconn_new(NETCONN_TCP_IPV6);
+    ESP_LOGV(TAG, "netconn using IPv6");
+#endif
+#endif
 
     if (lwipNetconn == NULL) {
       ESP_LOGE(TAG, "can't create netconn");
