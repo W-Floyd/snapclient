@@ -78,8 +78,9 @@ void setup_network(esp_netif_t** netif) {
                "to static server settings");
       use_mdns = false;
     }
-#else
+#endif
     if (use_mdns) {
+#if CONFIG_SNAPSERVER_USE_MDNS
       ESP_LOGI(TAG, "Enable mdns");
       mdns_init();
       // Find snapcast server via mDNS
@@ -144,8 +145,8 @@ void setup_network(esp_netif_t** netif) {
       mdns_query_results_free(r);
 
       ESP_LOGW(TAG, "Found %s:%d", ipaddr_ntoa(&remote_ip), remotePort);
-    } else {
 #endif
+    } else {
       // Use static server configuration from settings_manager
       char static_host[128] = {0};
       int32_t static_port = 0;
