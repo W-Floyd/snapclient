@@ -71,17 +71,15 @@ void setup_network(esp_netif_t** netif) {
       use_mdns = true;  // default to mdns if error
     }
 
-#ifndef CONFIG_SNAPSERVER_USE_MDNS
+#if !CONFIG_SNAPSERVER_USE_MDNS
     if (use_mdns) {
       ESP_LOGW(TAG,
                "mDNS requested in settings but not compiled in; falling back "
                "to static server settings");
       use_mdns = false;
     }
-#endif
-
+#else
     if (use_mdns) {
-#if CONFIG_SNAPSERVER_USE_MDNS
       ESP_LOGI(TAG, "Enable mdns");
       mdns_init();
       // Find snapcast server via mDNS
@@ -145,7 +143,7 @@ void setup_network(esp_netif_t** netif) {
 
       mdns_query_results_free(r);
 
-      ESP_LOGI(TAG, "Found %s:%d", ipaddr_ntoa(&remote_ip), remotePort);
+      ESP_LOGW(TAG, "Found %s:%d", ipaddr_ntoa(&remote_ip), remotePort);
     } else {
 #endif
       // Use static server configuration from settings_manager
