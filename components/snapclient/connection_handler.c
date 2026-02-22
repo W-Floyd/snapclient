@@ -170,6 +170,8 @@ void setup_network(esp_netif_t** netif) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         continue;
       }
+      ESP_LOGW(TAG, "Using static server config from settings: %s:%d", static_host,
+               static_port);
 
       if (ipaddr_aton(static_host, &remote_ip) == 0) {
         ESP_LOGE(TAG, "can't convert static server address to numeric: %s",
@@ -179,7 +181,7 @@ void setup_network(esp_netif_t** netif) {
 
       remotePort = (uint16_t)static_port;
 
-      ESP_LOGI(TAG, "try connecting to static configuration %s:%d",
+      ESP_LOGW(TAG, "try connecting to static configuration %s:%d",
                ipaddr_ntoa(&remote_ip), remotePort);
     }
 
