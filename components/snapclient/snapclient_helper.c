@@ -1,5 +1,6 @@
 #include "snapclient_helper.h"
-#include "esp_netif.h"
+
+#include <string.h>
 
 
 // Settings manager is an optional component that can be used to persist snapclient settings like server host and port,
