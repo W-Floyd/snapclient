@@ -357,6 +357,7 @@ void app_main(void) {
 
   init_player(i2s_pin_config0, I2S_NUM_0, player_set_mute);
   add_player_state_cb(player_state_changed);
+  init_snapcast(audio_set_volume, set_mute_state);
 
   // Create binary semaphore for player state change notification
   playerStateChangedMutex = xSemaphoreCreateBinary();
@@ -401,7 +402,7 @@ void app_main(void) {
 
   xTaskCreatePinnedToCore(&ota_server_task, "ota", 14 * 256, NULL,
                           OTA_TASK_PRIORITY, &t_ota_task, OTA_TASK_CORE_ID);
-  init_snapcast(audio_set_volume, set_mute_state);
+  start_snapcast();
 
   //  while (1) {
   //    // audio_event_iface_msg_t msg;

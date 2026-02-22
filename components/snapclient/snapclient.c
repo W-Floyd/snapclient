@@ -1299,8 +1299,12 @@ int init_snapcast(void (*set_volume)(int), void (*set_mute)(bool)) {
   }
   set_volume_cb = set_volume;
   set_mute_cb = set_mute;
+  return 0;
+}
+
+void start_snapcast() {
   xTaskCreatePinnedToCore(&http_get_task, "http", 15 * 1024, NULL,
                           HTTP_TASK_PRIORITY, &t_http_get_task,
                           HTTP_TASK_CORE_ID);
-  return 0;
+  ESP_LOGD(TAG, "Started snapcast client task");
 }
