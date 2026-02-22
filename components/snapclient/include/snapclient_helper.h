@@ -5,6 +5,11 @@
 extern "C" {
 #endif
 
+#include "esp_err.h"
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
 // Settings manager is an optional component that can be used to persist snapclient settings like server host and port,
 // mdns enabled etc. If it's not included, default values from sdkconfig will be used (if set) or hardcoded defaults.
 #ifndef HAS_SETTINGS_MANAGER

@@ -24,7 +24,7 @@
 #endif
 #include "snapcast.h"
 #include "snapcast_protocol_parser.h"
-#include "snapclient_settings.h"
+#include "snapclient_helper.h"
 
 static bool isCachedChunk = false;
 static uint32_t cachedBlocks = 0;
