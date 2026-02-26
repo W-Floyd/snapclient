@@ -327,6 +327,7 @@ parser_return_state_t parse_time_message(snapcast_protocol_parser_t* parser,
 parser_return_state_t parser_skip_typed_message(
     snapcast_protocol_parser_t* parser, base_message_t* base_message_rx) {
   // For unknown messages, we need to consume all remaining bytes
+  ESP_LOGI(TAG, "skipping typed message %d", base_message_rx->type);
   char dummy_byte;
   for (uint32_t i = 0; i < base_message_rx->size; i++) {
     READ_BYTE(parser, dummy_byte);
