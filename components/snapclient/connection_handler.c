@@ -71,7 +71,7 @@ void setup_network(esp_netif_t** netif) {
       use_mdns = true;  // default to mdns if error
     }
 
-#if !CONFIG_SNAPSERVER_USE_MDNS
+#ifndef CONFIG_SNAPSERVER_USE_MDNS
     if (use_mdns) {
       ESP_LOGW(TAG,
                "mDNS requested in settings but not compiled in; falling back "
@@ -80,7 +80,7 @@ void setup_network(esp_netif_t** netif) {
     }
 #endif
     if (use_mdns) {
-#if CONFIG_SNAPSERVER_USE_MDNS
+#ifdef CONFIG_SNAPSERVER_USE_MDNS
       ESP_LOGI(TAG, "Enable mdns");
       mdns_init();
       // Find snapcast server via mDNS
@@ -144,7 +144,7 @@ void setup_network(esp_netif_t** netif) {
 
       mdns_query_results_free(r);
 
-      ESP_LOGW(TAG, "Found %s:%d", ipaddr_ntoa(&remote_ip), remotePort);
+      ESP_LOGI(TAG, "Found %s:%d", ipaddr_ntoa(&remote_ip), remotePort);
 #endif
     } else {
       // Use static server configuration from settings_manager
@@ -169,8 +169,6 @@ void setup_network(esp_netif_t** netif) {
         vTaskDelay(pdMS_TO_TICKS(1000));
         continue;
       }
-      ESP_LOGW(TAG, "Using static server config from settings: %s:%d", static_host,
-               static_port);
 
       if (ipaddr_aton(static_host, &remote_ip) == 0) {
         ESP_LOGE(TAG, "can't convert static server address to numeric: %s",
@@ -180,7 +178,7 @@ void setup_network(esp_netif_t** netif) {
 
       remotePort = (uint16_t)static_port;
 
-      ESP_LOGW(TAG, "try connecting to static configuration %s:%d",
+      ESP_LOGI(TAG, "try connecting to static configuration %s:%d",
                ipaddr_ntoa(&remote_ip), remotePort);
     }
 
