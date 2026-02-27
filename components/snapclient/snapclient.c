@@ -981,7 +981,7 @@ int process_data(snapcast_protocol_parser_t* parser,
         return -1;
       }
 
-      ESP_LOGD(TAG, "done skipping typed message %d", base_message_rx->type);
+      ESP_LOGD(TAG, "done skipping typed message %d", base_message_rx.type);
       return 0;
     }
   }
