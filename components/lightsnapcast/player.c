@@ -617,14 +617,16 @@ void pause_player(bool pause) {
   xSemaphoreTake(playerStateMux, portMAX_DELAY);
   if (pause != playerPaused) {
     playerPaused = pause;
+    xSemaphoreGive(playerStateMux);
     if (pause && playerTaskHandle != NULL) {
       xTaskNotifyGiveIndexed(playerTaskHandle, 1);
     }
-    if (!pause) {
+    else {
       call_state_cb();  // notify state change, e.g. for http task to send pcm
     }
+  } else {
+    xSemaphoreGive(playerStateMux);
   }
-  xSemaphoreGive(playerStateMux);
 }
 
 player_state_e get_player_state(void) {
