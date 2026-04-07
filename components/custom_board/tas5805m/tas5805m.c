@@ -132,22 +132,20 @@ esp_err_t tas5805m_read_byte(uint8_t register_name, uint8_t *data) {
   i2c_master_write_byte(cmd, TAS5805M_ADDRESS << 1 | WRITE_BIT, ACK_CHECK_EN);
   i2c_master_write_byte(cmd, register_name, ACK_CHECK_EN);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd,
-                             1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, pdMS_TO_TICKS(1000));
   i2c_cmd_link_delete(cmd);
 
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "%s: I2C ERROR", __func__);
   }
 
-  vTaskDelay(1 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(1));
   cmd = i2c_cmd_link_create();
   i2c_master_start(cmd);
   i2c_master_write_byte(cmd, TAS5805M_ADDRESS << 1 | READ_BIT, ACK_CHECK_EN);
   i2c_master_read_byte(cmd, data, NACK_VAL);
   i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd,
-                             1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, pdMS_TO_TICKS(1000));
   i2c_cmd_link_delete(cmd);
   ESP_LOGV(TAG, "%s: Read 0x%02x from register 0x%02x", __func__, *data, register_name);
   return ret;
@@ -165,8 +163,7 @@ esp_err_t tas5805m_write_byte(uint8_t register_name, uint8_t value) {
   i2c_master_write_byte(cmd, value, ACK_CHECK_EN);
   i2c_master_stop(cmd);
 
-  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd,
-                             1000 / portTICK_PERIOD_MS);
+  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, pdMS_TO_TICKS(1000));
 
   // Check if ret is OK
   if (ret != ESP_OK) {
@@ -194,7 +191,7 @@ esp_err_t tas5805m_write_bytes(uint8_t *reg,
   ret |= i2c_master_write(cmd, reg, regLen, ACK_CHECK_EN);
   ret |= i2c_master_write(cmd, data, datalen, ACK_CHECK_EN);
   ret |= i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, pdMS_TO_TICKS(1000));
 
   // Check if ret is OK
   if (ret != ESP_OK)
@@ -217,7 +214,7 @@ esp_err_t tas5805m_read_bytes(uint8_t *reg, int regLen, uint8_t *data, int datal
   ret |= i2c_master_write_byte(cmd, TAS5805M_ADDRESS << 1 | WRITE_BIT, ACK_CHECK_EN);
   ret |= i2c_master_write(cmd, reg, regLen, ACK_CHECK_EN);
   ret |= i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, pdMS_TO_TICKS(1000));
   i2c_cmd_link_delete(cmd);
 
   if (ret != ESP_OK) {
@@ -225,7 +222,7 @@ esp_err_t tas5805m_read_bytes(uint8_t *reg, int regLen, uint8_t *data, int datal
     return ret;
   }
 
-  vTaskDelay(1 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(1));
   
   cmd = i2c_cmd_link_create();
   ret |= i2c_master_start(cmd);
@@ -235,7 +232,7 @@ esp_err_t tas5805m_read_bytes(uint8_t *reg, int regLen, uint8_t *data, int datal
   }
   ret |= i2c_master_read_byte(cmd, data + datalen - 1, NACK_VAL);
   ret |= i2c_master_stop(cmd);
-  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, 1000 / portTICK_RATE_MS);
+  ret = i2c_master_cmd_begin(I2C_TAS5805M_MASTER_NUM, cmd, pdMS_TO_TICKS(1000));
 
   if (ret != ESP_OK) {
     ESP_LOGE(TAG, "%s: Error during I2C read phase: %s", __func__, esp_err_to_name(ret));
@@ -267,9 +264,9 @@ esp_err_t tas5805m_init() {
   ESP_LOGI(TAG, "%s: Triggering power down pin: %d", __func__, TAS5805M_GPIO_PDN);
   gpio_config(&io_conf);
   gpio_set_level(TAS5805M_GPIO_PDN, 0);
-  vTaskDelay(10 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(10));
   gpio_set_level(TAS5805M_GPIO_PDN, 1);
-  vTaskDelay(10 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(10));
 
   ESP_LOGI(TAG, "%s: Setting to HI Z", __func__);
 
@@ -281,7 +278,7 @@ esp_err_t tas5805m_init() {
     ESP_LOGW(TAG, "%s: Failed to set RESET flag: %s", __func__, esp_err_to_name(ret));
   }
 
-  vTaskDelay(10 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(10));
   if (ret != ESP_OK) {
     ESP_LOGW(TAG, "%s: Set DAC state failed", __func__);
     return ret;
@@ -304,7 +301,7 @@ esp_err_t tas5805m_init() {
   BaseType_t task_ret = xTaskCreate(
     tas5805m_fault_monitor_task,
     "tas5805m_faults",
-    2048,
+    2560,
     NULL,
     5,
     &tas5805m_fault_monitor_task_handle
@@ -435,7 +432,7 @@ esp_err_t tas5805m_deinit(void) {
   
   ESP_ERROR_CHECK(tas5805m_set_state(TAS5805M_CTRL_HI_Z));
   gpio_set_level(TAS5805M_GPIO_PDN, 0);
-  vTaskDelay(6 / portTICK_PERIOD_MS);
+  vTaskDelay(pdMS_TO_TICKS(6));
   return ESP_OK;
 }
 
