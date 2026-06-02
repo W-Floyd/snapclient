@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/time.h>
+#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -48,6 +49,12 @@ static dsp_all_params_t all_params;
 static ptype_t *filter = NULL;
 
 static double dynamic_vol = 1.0;
+
+// Volume curve power from SDK config (perceptually linear volume).
+// 1.0 = linear (no curve), 2.5 = standard curve, higher = more low-end compression.
+#ifndef CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER
+#define CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER 2.5
+#endif
 
 static bool init = false;
 
@@ -789,9 +796,16 @@ int dsp_processor_worker(void *p_pcmChnk, const void *p_scSet) {
 void dsp_processor_set_volome(double volume) {
   ESP_LOGD(TAG, "%s: volume=%f", __func__, volume);
   if (volume >= 0 && volume <= 1.0) {
-    ESP_LOGI(TAG, "Set volume to %f", volume);
-    dynamic_vol = volume;
-  }
+     // Apply exponential volume curve for perceptually linear loudness.
+     // Human hearing is logarithmic (~6 dB per doubling), so we use
+     // pow(volume, CURVE_POWER) to compress the low end and expand the high end.
+     // This gives fine control at low volumes while still reaching full
+     // volume at slider position 100%.
+    double curve = (volume > 0.0) ? pow(volume, CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER) : 0.0;
+    ESP_LOGI(TAG, "Set volume to %f (raw %f, curve_power=%.1f)", curve,
+             volume, (float) CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER);
+    dynamic_vol = curve;
+   }
 }
 /**
  * Set parameters for a specific flow (without switching to it)
