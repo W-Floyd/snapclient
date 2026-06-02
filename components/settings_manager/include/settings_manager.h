@@ -41,6 +41,11 @@ esp_err_t settings_get_server_port(int32_t *port);
 esp_err_t settings_set_server_port(int32_t port);
 esp_err_t settings_clear_server_port(void);
 
+/* Snapserver control port (for JSON-RPC control commands) */
+esp_err_t settings_get_control_port(int32_t *port);
+esp_err_t settings_set_control_port(int32_t port);
+esp_err_t settings_clear_control_port(void);
+
 /**
  * Get all settings as a JSON string
  * @param json_out Buffer to store JSON string (caller must allocate)
@@ -52,7 +57,8 @@ esp_err_t settings_clear_server_port(void);
  *   "hostname": "esp32-snapclient",
  *   "mdns_enabled": true,
  *   "server_host": "192.168.1.100",
- *   "server_port": 1704
+ *   "server_port": 1704,
+ *   "control_port": 1705
  * }
  */
 esp_err_t settings_get_json(char *json_out, size_t max_len);
@@ -67,7 +73,8 @@ esp_err_t settings_get_json(char *json_out, size_t max_len);
  *   "hostname": "my-device",
  *   "mdns_enabled": false,
  *   "server_host": "192.168.1.100",
- *   "server_port": 1704
+ *   "server_port": 1704,
+ *   "control_port": 1705
  * }
  */
 esp_err_t settings_set_from_json(const char *json_in);

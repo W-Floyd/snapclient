@@ -62,3 +62,15 @@ esp_netif_t *network_get_netif_from_desc(const char *desc) {
 	return esp_netif_find_if(netif_desc_matches_with, (void *)desc);
 }
 #endif
+
+// Control port helper (default: 1705 for snapserver TCP RPC)
+#ifndef HAS_SETTINGS_MANAGER
+esp_err_t settings_get_control_port(int32_t *port) {
+#ifdef CONFIG_SNAPSERVER_CONTROL_PORT
+	*port = CONFIG_SNAPSERVER_CONTROL_PORT;
+#else
+	*port = 1705; // snapserver default
+#endif
+	return ESP_OK;
+}
+#endif
