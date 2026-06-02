@@ -19,6 +19,7 @@
 
 // External variable that need to be accessible
 extern struct netconn *lwipNetconn;
+extern ip_addr_t remote_server_ip;
 
 static const char *TAG = "CONNECTION_HANDLER";
 
@@ -265,6 +266,8 @@ void setup_network(esp_netif_t **netif) {
 
 		ESP_LOGI(TAG, "netconn connected using %s",
 				 esp_netif_get_ifkey(*netif));
+		// Store the remote IP for control port connection
+		remote_server_ip = remote_ip;
 		break; // SUCCESS
 	}
 }
@@ -312,8 +315,8 @@ static int receive_data(struct netbuf **firstNetBuf, bool isMuted,
 			continue;
 		} else {
 			ESP_LOGD(TAG, "netconn rx OK");
+			break;
 		}
-		break;
 	}
 
 #if CONFIG_SNAPCLIENT_USE_INTERNAL_ETHERNET ||                                 \

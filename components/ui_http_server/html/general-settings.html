@@ -188,6 +188,7 @@
         let currentSnapUseMDNS = true;
         let currentSnapHost = '';
         let currentSnapPort = '';
+        let currentControlPort = '1705';
         let needsRestart = false; // Track if device needs restart
         let isDirty = false;
 
@@ -208,6 +209,7 @@
                 currentSnapUseMDNS = capabilities.mdns_enabled !== undefined ? capabilities.mdns_enabled : true;
                 currentSnapHost = capabilities.server_host || '';
                 currentSnapPort = capabilities.server_port || '';
+                currentControlPort = capabilities.control_port || '1705';
 
                 renderUI();
             } catch (error) {
@@ -249,9 +251,13 @@
             html += '<label for="snap-host">Snapserver Host</label>';
             html += '<input type="text" id="snap-host" value="' + escapeHtml(currentSnapHost) + '" placeholder="e.g. 192.168.1.158 or myserver.local" maxlength="255" oninput="handleSnapserverHostChange(this.value)"' + (currentSnapUseMDNS ? ' disabled' : '') + '>';
             html += '<div id="snap-host-validation" class="validation-error"></div>';
-            html += '<label for="snap-port">Snapserver Port</label>';
+            html += '<label for="snap-port">Snapserver Port (streaming)</label>';
             html += '<input type="text" id="snap-port" value="' + escapeHtml(currentSnapPort) + '" placeholder="1704" maxlength="6" oninput="handleSnapserverPortChange(this.value)"' + (currentSnapUseMDNS ? ' disabled' : '') + '>';
             html += '<div id="snap-port-validation" class="validation-error"></div>';
+            html += '<label for="snap-control-port">Snapserver Control Port (JSON-RPC)</label>';
+            html += '<input type="text" id="snap-control-port" value="' + escapeHtml(currentControlPort) + '" placeholder="1705" maxlength="6" oninput="handleSnapserverControlPortChange(this.value)" disabled>';
+            html += '<div id="snap-control-port-validation" class="validation-error"></div>';
+            html += '<div class="description">Port for sending control commands (Client.SetVolume). Typically always 1705.</div>';
             html += '<div class="button-group">';
             html += '<button class="btn btn-primary" id="save-snap-btn" onclick="saveSnapserverSettings()" disabled>Save Changes</button>';
             html += '<button class="btn btn-secondary" onclick="resetSnapserverSettings()">Reset</button>';

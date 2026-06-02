@@ -80,6 +80,65 @@ static char base_message_serialized[BASE_MESSAGE_SIZE];
 
 struct netconn *lwipNetconn;
 
+// Remote server IP (set by connection_handler after successful connection)
+ip_addr_t remote_server_ip;
+
+// MAC address cached at init for use in JSON-RPC control commands
+static char client_mac_addr[18] = {0};
+
+// Control port connection (for JSON-RPC commands to snapserver on port 1705)
+struct netconn *lwipNetconnControl = NULL;
+
+// Forward declaration
+int setup_snapserver_control_connection(void);
+
+/**
+ * Send server settings (volume/mute) to the snapserver via control port (1705).
+ * This allows the client to push volume/mute changes to the server,
+ * so that other clients connected to the server will also receive
+ * the updated settings.
+ */
+int snapcast_send_client_volume(int volume, bool muted) {
+	// Prefer control port connection (port 1705) for JSON-RPC commands
+	struct netconn *conn = lwipNetconnControl;
+
+	// Fall back to streaming connection if control port not available
+	if (conn == NULL) {
+		conn = lwipNetconn;
+		if (conn == NULL) {
+			return -1;
+		}
+	}
+
+	// Build JSON-RPC targeting this client by cached MAC address
+	// Format: {"jsonrpc":"2.0","method":"Client.SetVolume",
+	//           "params":{"id":"<MAC>","volume":{"muted":false,"percent":74}}}
+	// NOTE: The snapserver's TCP control protocol reads until a newline
+	// delimiter, so we must append \n to the JSON-RPC payload.
+	char rpc_payload[256];
+	int len = snprintf(
+		rpc_payload, sizeof(rpc_payload),
+		"{\"id\":\"%s\",\"jsonrpc\":\"2.0\",\"method\":\"Client.SetVolume\","
+		"\"params\":{\"id\":\"%s\",\"volume\":{\"muted\":%s,"
+		"\"percent\":%d}}}\n",
+		client_mac_addr, client_mac_addr, muted ? "true" : "false", volume);
+
+	if (len < 0 || len >= (int)sizeof(rpc_payload)) {
+		ESP_LOGE(TAG, "RPC payload too large");
+		return -1;
+	}
+
+	// Send raw JSON over TCP
+	int ret = netconn_write(conn, rpc_payload, (size_t)len, NETCONN_COPY);
+	if (ret != ERR_OK) {
+		ESP_LOGW(TAG, "Failed to send JSON-RPC volume command: %d", ret);
+		return -1;
+	}
+
+	ESP_LOGI(TAG, "Sent per-client volume command successfully");
+	return 0;
+}
+
 static int id_counter = 0;
 
 static OpusDecoder *opusDecoder = NULL;
@@ -491,9 +550,8 @@ void server_settings_msg_received(
 			dsp_processor_set_volome((double)server_settings_message->volume /
 									 100);
 		}
-#else
-		set_volume_cb(server_settings_message->volume);
 #endif
+		set_volume_cb(server_settings_message->volume);
 	}
 
 	scSet->muted = server_settings_message->muted;
@@ -1169,15 +1227,21 @@ static void http_get_task(void *pvParameters) {
 
 		rc1 = netconn_write(lwipNetconn, base_message_serialized,
 							BASE_MESSAGE_SIZE, NETCONN_NOCOPY);
-		rc1 |= netconn_write(lwipNetconn, hello_message_serialized,
-							 base_message_rx.size, NETCONN_NOCOPY);
 		if (rc1 != ERR_OK) {
-			ESP_LOGE(TAG, "netconn failed to send hello message");
-
+			ESP_LOGE(TAG, "netconn failed to send base message, rc=%d", rc1);
+			continue;
+		}
+		rc1 = netconn_write(lwipNetconn, hello_message_serialized,
+							base_message_rx.size, NETCONN_NOCOPY);
+		if (rc1 != ERR_OK) {
+			ESP_LOGE(TAG, "netconn failed to send hello payload, rc=%d", rc1);
 			continue;
 		}
 
 		ESP_LOGI(TAG, "netconn sent hello message");
+
+		// Establish control port connection for JSON-RPC commands
+		int control_result = setup_snapserver_control_connection();
 
 		free(hello_message_serialized);
 		hello_message_serialized = NULL;
@@ -1225,13 +1289,15 @@ static void http_get_task(void *pvParameters) {
 			if (ulTaskNotifyTake(pdTRUE, 1) == pdTRUE) {
 				// state change, e.g. pause/play
 				paused = get_player_state() == PAUSED;
-				// ESP_LOGI(TAG, "http got cb. %s", paused ? "paused" :
-				// "playing/idle");
 			}
 			int result =
 				process_data(&parser, &time_sync_data, &received_codec_header,
 							 &codec, &scSet, &pcmData, paused);
 			if (result != 0) {
+				ESP_LOGE(TAG,
+						 "process_data failed: %d, restarting "
+						 "connection",
+						 result);
 				break; // restart connection
 			}
 		}
@@ -1254,6 +1320,16 @@ int init_snapcast(void (*set_volume)(int), void (*set_mute)(bool)) {
 	}
 	set_volume_cb = set_volume;
 	set_mute_cb = set_mute;
+
+	// Cache MAC address for use in subsequent JSON-RPC control commands
+	// The server identifies clients by MAC from the kHello handshake,
+	// so the MAC used here must match exactly.
+	uint8_t mac_bytes[6];
+	esp_read_mac(mac_bytes, ESP_MAC_WIFI_STA);
+	snprintf(client_mac_addr, sizeof(client_mac_addr),
+			 "%02X:%02X:%02X:%02X:%02X:%02X", mac_bytes[0], mac_bytes[1],
+			 mac_bytes[2], mac_bytes[3], mac_bytes[4], mac_bytes[5]);
+
 	return 0;
 }
 
@@ -1262,4 +1338,52 @@ void start_snapcast() {
 							HTTP_TASK_PRIORITY, &t_http_get_task,
 							HTTP_TASK_CORE_ID);
 	ESP_LOGD(TAG, "Started snapcast client task");
+}
+
+/**
+ * Establish TCP connection to snapserver control port (default 1705)
+ * for JSON-RPC control commands.
+ */
+int setup_snapserver_control_connection(void) {
+	if (lwipNetconnControl != NULL) {
+		// Already connected
+		return 0;
+	}
+
+	if (lwipNetconn == NULL) {
+		ESP_LOGE(TAG, "Streaming connection not yet established, cannot setup "
+					  "control connection");
+		return -1;
+	}
+
+	int32_t control_port = 1705; // snapserver default
+	settings_get_control_port(&control_port);
+
+	// Create TCP connection for control port
+	lwipNetconnControl = netconn_new(NETCONN_TCP);
+	if (lwipNetconnControl == NULL) {
+		ESP_LOGE(TAG, "Failed to create control port netconn");
+		return -1;
+	}
+
+	// Use the remote IP stored when the streaming connection was
+	// established
+	if (remote_server_ip.addr == 0) {
+		ESP_LOGE(TAG, "No streaming connection established yet, cannot setup "
+					  "control connection");
+		netconn_delete(lwipNetconnControl);
+		lwipNetconnControl = NULL;
+		return -1;
+	}
+
+	int ret = netconn_connect(lwipNetconnControl, &remote_server_ip,
+							  (u16_t)control_port);
+	if (ret != ERR_OK) {
+		ESP_LOGE(TAG, "Failed to connect to control port, err %d", ret);
+		netconn_delete(lwipNetconnControl);
+		lwipNetconnControl = NULL;
+		return -1;
+	}
+
+	return 0;
 }

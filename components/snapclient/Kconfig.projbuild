@@ -29,7 +29,14 @@ menu "Snapclient Configuration"
         default 1704
         depends on !SNAPSERVER_USE_MDNS
         help
-            Port of the snapserver to connect to.
+            Port of the snapserver to connect to for streaming.
+
+    config SNAPSERVER_CONTROL_PORT
+        int "Snapserver control port"
+        default 1705
+        depends on !SNAPSERVER_USE_MDNS
+        help
+            Port of the snapserver to connect to for control commands (JSON-RPC).
 
     config SNAPCLIENT_NAME
         string "snapclient name"

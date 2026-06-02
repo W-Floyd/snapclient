@@ -173,7 +173,8 @@ Configure to match your setup
   - <b>Snapclient configuration :</b>
     - Use mDNS : The client will search on the network for the snapserver automatically. Your network must support mDNS.
     - Snapserver host : IP address of the server if mDNS is disabled or the mDNS resolution fails.
-    - Snapserver port :  Port of your snapserver, default is 1704.
+    - Snapserver port :  Port of your snapserver for streaming, default is 1704.
+    - Snapserver control port :  Port of your snapserver for control commands (JSON-RPC), default is 1705.
     - Snapclient name : The name under which your ESP will appear on the Snapserver.
     - HTTP Server Setting : The ESP creates a basic webpage. You can configure the port to view this page and configure the DSP.
 
