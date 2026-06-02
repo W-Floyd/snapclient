@@ -1,45 +1,47 @@
 
 
+#include <math.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/time.h>
-#include <math.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
 
 #if CONFIG_USE_DSP_PROCESSOR
 #include "dsp_processor.h"
+#include "dsp_processor_settings.h"
 #include "dsps_biquad.h"
 #include "dsps_biquad_gen.h"
 #include "esp_log.h"
 #include "player.h"
 
 typedef struct ptype {
-  int filtertype;
-  float freq;
-  float gain;
-  float q;
-  float *in, *out;
-  float coeffs[5];
-  float w[2];
+	int filtertype;
+	float freq;
+	float gain;
+	float q;
+	float *in, *out;
+	float coeffs[5];
+	float w[2];
 } ptype_t;
 
 typedef struct dsp_all_params_s {
-  dspFlows_t active_flow;
-  struct {
-    float fc_1;
-    float gain_1;
-    float fc_3;
-    float gain_3;
-  } flow_params[DSP_FLOW_COUNT];
+	dspFlows_t active_flow;
+	struct {
+		float fc_1;
+		float gain_1;
+		float fc_3;
+		float gain_3;
+	} flow_params[DSP_FLOW_COUNT];
 } dsp_all_params_t;
 
 static const char *TAG = "dsp_proc";
 
 #define DSP_PROCESSOR_LEN 16
 
-// Legacy queue removed. Use paramsChangedSemaphoreHandle to notify worker of updates.
+// Legacy queue removed. Use paramsChangedSemaphoreHandle to notify worker of
+// updates.
 static SemaphoreHandle_t paramsChangedSemaphoreHandle = NULL;
 static SemaphoreHandle_t params_mutex = NULL;
 
@@ -49,12 +51,42 @@ static dsp_all_params_t all_params;
 static ptype_t *filter = NULL;
 
 static double dynamic_vol = 1.0;
+static double last_slider_position = 1.0;
 
-// Volume curve power from SDK config (perceptually linear volume).
-// 1.0 = linear (no curve), 2.5 = standard curve, higher = more low-end compression.
-#ifndef CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER
-#define CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER 2.5
+// Exponential volume curve parameters.
+// Maps slider position [0, 1] to amplitude [curve_a, 1.0]
+// using y = curve_a * expf(curve_b * x).
+//
+// Why /20? Decibels for amplitude use 20*log10(amplitude) because power
+// is proportional to amplitude squared: dB = 10*log10(P) = 20*log10(A).
+// So: curve_a = 10^(-dB / 20) gives the amplitude factor at slider=0.
+//
+// Example with dB_RANGE=60: curve_a = 10^(-60/20) = 0.001 = -60 dB
+// This matches standard practice: 0% slider ≈ background noise floor,
+// 100% slider = maximum loudness.
+//
+// Computed at init from CONFIG_SNAPCLIENT_VOLUME_CURVE_DB_RANGE,
+// but can be overridden at runtime via
+// dsp_processor_set_volume_curve_db_range().
+#ifndef CONFIG_SNAPCLIENT_VOLUME_CURVE_DB_RANGE
+#define CONFIG_SNAPCLIENT_VOLUME_CURVE_DB_RANGE 60
 #endif
+#define VOLUME_CURVE_ROLLOFF_THRESHOLD 0.1f
+
+static float volume_curve_db_range =
+	(float)CONFIG_SNAPCLIENT_VOLUME_CURVE_DB_RANGE;
+static float curve_a;
+static float curve_b;
+static float curve_threshold_val;
+
+static void compute_curve(void) {
+	curve_a = powf(10.0f, -volume_curve_db_range / 20.0f);
+	curve_b = -logf(curve_a);
+	// Precompute curve value at rolloff threshold for smooth linear
+	// interpolation
+	curve_threshold_val =
+		curve_a * expf(curve_b * VOLUME_CURVE_ROLLOFF_THRESHOLD);
+}
 
 static bool init = false;
 
@@ -71,89 +103,99 @@ dspFlows_t dspFlowInit = dspfStereo;
  *
  */
 void dsp_processor_init(void) {
-  ESP_LOGD(TAG, "%s: initializing", __func__);
-  init = false;
-  // Initialize all_params with defaults for each flow
-  memset(&all_params, 0, sizeof(dsp_all_params_t));
-  all_params.active_flow = dspFlowInit;
-  
-  // Set defaults for dspfEQBassTreble
-  all_params.flow_params[dspfEQBassTreble].fc_1 = DSP_BASS_FREQ_DEFAULT;
-  all_params.flow_params[dspfEQBassTreble].gain_1 = DSP_GAIN_DEFAULT;
-  all_params.flow_params[dspfEQBassTreble].fc_3 = DSP_TREBLE_FREQ_DEFAULT;
-  all_params.flow_params[dspfEQBassTreble].gain_3 = DSP_GAIN_DEFAULT;
-  
-  // Set defaults for dspfBassBoost
-  all_params.flow_params[dspfBassBoost].fc_1 = DSP_BASS_FREQ_DEFAULT;
-  all_params.flow_params[dspfBassBoost].gain_1 = DSP_BASSBOOST_GAIN_DEFAULT;
-  
-  // Set defaults for dspfBiamp
-  all_params.flow_params[dspfBiamp].fc_1 = DSP_CROSSOVER_FREQ_DEFAULT;
-  all_params.flow_params[dspfBiamp].gain_1 = DSP_GAIN_DEFAULT;
-  all_params.flow_params[dspfBiamp].fc_3 = DSP_CROSSOVER_FREQ_DEFAULT;
-  all_params.flow_params[dspfBiamp].gain_3 = DSP_GAIN_DEFAULT;
-  
-  // dspfStereo has no parameters (pass-through with volume only)
-  // dspf2DOT1 and dspfFunkyHonda not yet implemented
+	ESP_LOGD(TAG, "%s: initializing", __func__);
+	init = false;
+	// Initialize all_params with defaults for each flow
+	memset(&all_params, 0, sizeof(dsp_all_params_t));
+	all_params.active_flow = dspFlowInit;
 
-  // Note: Do not read settings here to avoid circular dependency. The
-  // dsp_processor_settings component will call dsp_processor_set_params_for_flow()
-  // and dsp_processor_switch_flow() during its init to apply saved settings.
+	// Set defaults for dspfEQBassTreble
+	all_params.flow_params[dspfEQBassTreble].fc_1 = DSP_BASS_FREQ_DEFAULT;
+	all_params.flow_params[dspfEQBassTreble].gain_1 = DSP_GAIN_DEFAULT;
+	all_params.flow_params[dspfEQBassTreble].fc_3 = DSP_TREBLE_FREQ_DEFAULT;
+	all_params.flow_params[dspfEQBassTreble].gain_3 = DSP_GAIN_DEFAULT;
 
-  if (params_mutex == NULL) {
-    params_mutex = xSemaphoreCreateMutex();
-    if (params_mutex == NULL) {
-      ESP_LOGW(TAG, "%s: failed to create params mutex", __func__);
-    }
-  }
-  if (paramsChangedSemaphoreHandle == NULL) {
-    paramsChangedSemaphoreHandle = xSemaphoreCreateBinary();
-    if (paramsChangedSemaphoreHandle == NULL) {
-      ESP_LOGW(TAG, "%s: failed to create params changed semaphore", __func__);
-    } else {
-      xSemaphoreTake(paramsChangedSemaphoreHandle, 10);
-    }
-  }
-  ESP_LOGI(TAG, "%s: Initialized with flow=%d, fc_1=%.1f, gain_1=%.1f", __func__,
-           all_params.active_flow, 
-           all_params.flow_params[all_params.active_flow].fc_1,
-           all_params.flow_params[all_params.active_flow].gain_1);
+	// Set defaults for dspfBassBoost
+	all_params.flow_params[dspfBassBoost].fc_1 = DSP_BASS_FREQ_DEFAULT;
+	all_params.flow_params[dspfBassBoost].gain_1 = DSP_BASSBOOST_GAIN_DEFAULT;
 
-  ESP_LOGI(TAG, "%s: init done", __func__);
+	// Set defaults for dspfBiamp
+	all_params.flow_params[dspfBiamp].fc_1 = DSP_CROSSOVER_FREQ_DEFAULT;
+	all_params.flow_params[dspfBiamp].gain_1 = DSP_GAIN_DEFAULT;
+	all_params.flow_params[dspfBiamp].fc_3 = DSP_CROSSOVER_FREQ_DEFAULT;
+	all_params.flow_params[dspfBiamp].gain_3 = DSP_GAIN_DEFAULT;
+
+	// dspfStereo has no parameters (pass-through with volume only)
+	// dspf2DOT1 and dspfFunkyHonda not yet implemented
+
+	// Note: Do not read settings here to avoid circular dependency. The
+	// dsp_processor_settings component will call
+	// dsp_processor_set_params_for_flow() and dsp_processor_switch_flow()
+	// during its init to apply saved settings.
+
+	// Use Kconfig default here; the actual saved value is loaded after
+	// dsp_processor_settings_init() has created the NVS mutex.
+	compute_curve();
+	ESP_LOGI(
+		TAG,
+		"Volume curve: range=%.0f dB, a=%.6f, b=%.3f (default from Kconfig)",
+		(float)CONFIG_SNAPCLIENT_VOLUME_CURVE_DB_RANGE, curve_a, curve_b);
+
+	if (params_mutex == NULL) {
+		params_mutex = xSemaphoreCreateMutex();
+		if (params_mutex == NULL) {
+			ESP_LOGW(TAG, "%s: failed to create params mutex", __func__);
+		}
+	}
+	if (paramsChangedSemaphoreHandle == NULL) {
+		paramsChangedSemaphoreHandle = xSemaphoreCreateBinary();
+		if (paramsChangedSemaphoreHandle == NULL) {
+			ESP_LOGW(TAG, "%s: failed to create params changed semaphore",
+					 __func__);
+		} else {
+			xSemaphoreTake(paramsChangedSemaphoreHandle, 10);
+		}
+	}
+	ESP_LOGI(TAG, "%s: Initialized with flow=%d, fc_1=%.1f, gain_1=%.1f",
+			 __func__, all_params.active_flow,
+			 all_params.flow_params[all_params.active_flow].fc_1,
+			 all_params.flow_params[all_params.active_flow].gain_1);
+
+	ESP_LOGI(TAG, "%s: init done", __func__);
 }
 
 /**
  * free previously allocated memories
  */
 void dsp_processor_uninit(void) {
-  ESP_LOGD(TAG, "%s: uninitializing", __func__);
-  if (sbuffer0) {
-    free(sbuffer0);
-    sbuffer0 = NULL;
-  }
+	ESP_LOGD(TAG, "%s: uninitializing", __func__);
+	if (sbuffer0) {
+		free(sbuffer0);
+		sbuffer0 = NULL;
+	}
 
-  if (sbufout0) {
-    free(sbufout0);
-    sbufout0 = NULL;
-  }
+	if (sbufout0) {
+		free(sbufout0);
+		sbufout0 = NULL;
+	}
 
-  if (filter) {
-    free(filter);
-    filter = NULL;
-  }
+	if (filter) {
+		free(filter);
+		filter = NULL;
+	}
 
-  if (params_mutex) {
-    vSemaphoreDelete(params_mutex);
-    params_mutex = NULL;
-  }
+	if (params_mutex) {
+		vSemaphoreDelete(params_mutex);
+		params_mutex = NULL;
+	}
 
-  if (paramsChangedSemaphoreHandle) {
-    vSemaphoreDelete(paramsChangedSemaphoreHandle);
-    paramsChangedSemaphoreHandle = NULL;
-  }
-  init = false;
+	if (paramsChangedSemaphoreHandle) {
+		vSemaphoreDelete(paramsChangedSemaphoreHandle);
+		paramsChangedSemaphoreHandle = NULL;
+	}
+	init = false;
 
-  ESP_LOGI(TAG, "%s: uninit done", __func__);
+	ESP_LOGI(TAG, "%s: uninit done", __func__);
 }
 
 /**
@@ -161,77 +203,82 @@ void dsp_processor_uninit(void) {
  * Updates centralized storage and queues for worker thread
  */
 esp_err_t dsp_processor_update_filter_params(filterParams_t *params) {
-  ESP_LOGD(TAG, "%s: updating filter params", __func__);
-  
-  // Update centralized storage for the current flow
-  dspFlows_t flow = params->dspFlow;
-  if (flow >= 0 && flow < DSP_FLOW_COUNT) {  // Validate flow index
-    // Acquire mutex once, update parameters and set the notification flag
-    if (params_mutex && (xSemaphoreTake(params_mutex, portMAX_DELAY) == pdTRUE)) {
-      all_params.active_flow = flow;
-      all_params.flow_params[flow].fc_1 = params->fc_1;
-      all_params.flow_params[flow].gain_1 = params->gain_1;
-      all_params.flow_params[flow].fc_3 = params->fc_3;
-      all_params.flow_params[flow].gain_3 = params->gain_3;
-      if (paramsChangedSemaphoreHandle) {
-        xSemaphoreGive(paramsChangedSemaphoreHandle);
-      }
-      xSemaphoreGive(params_mutex);
-    } else {
-      // No mutex available: best-effort update
-      ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-      all_params.active_flow = flow;
-      all_params.flow_params[flow].fc_1 = params->fc_1;
-      all_params.flow_params[flow].gain_1 = params->gain_1;
-      all_params.flow_params[flow].fc_3 = params->fc_3;
-      all_params.flow_params[flow].gain_3 = params->gain_3;
-      if (paramsChangedSemaphoreHandle) {
-        xSemaphoreGive(paramsChangedSemaphoreHandle);
-      }
-    }
-  }
-  
-  // Worker polls params_changed; we set it while holding the mutex above
-  // to ensure atomic visibility. Nothing more to do here.
+	ESP_LOGD(TAG, "%s: updating filter params", __func__);
 
-  return ESP_OK;
+	// Update centralized storage for the current flow
+	dspFlows_t flow = params->dspFlow;
+	if (flow >= 0 && flow < DSP_FLOW_COUNT) { // Validate flow index
+		// Acquire mutex once, update parameters and set the notification flag
+		if (params_mutex &&
+			(xSemaphoreTake(params_mutex, portMAX_DELAY) == pdTRUE)) {
+			all_params.active_flow = flow;
+			all_params.flow_params[flow].fc_1 = params->fc_1;
+			all_params.flow_params[flow].gain_1 = params->gain_1;
+			all_params.flow_params[flow].fc_3 = params->fc_3;
+			all_params.flow_params[flow].gain_3 = params->gain_3;
+			if (paramsChangedSemaphoreHandle) {
+				xSemaphoreGive(paramsChangedSemaphoreHandle);
+			}
+			xSemaphoreGive(params_mutex);
+		} else {
+			// No mutex available: best-effort update
+			ESP_LOGW(TAG,
+					 "%s: params mutex not available, proceeding without mutex",
+					 __func__);
+			all_params.active_flow = flow;
+			all_params.flow_params[flow].fc_1 = params->fc_1;
+			all_params.flow_params[flow].gain_1 = params->gain_1;
+			all_params.flow_params[flow].fc_3 = params->fc_3;
+			all_params.flow_params[flow].gain_3 = params->gain_3;
+			if (paramsChangedSemaphoreHandle) {
+				xSemaphoreGive(paramsChangedSemaphoreHandle);
+			}
+		}
+	}
+
+	// Worker polls params_changed; we set it while holding the mutex above
+	// to ensure atomic visibility. Nothing more to do here.
+
+	return ESP_OK;
 }
 
 /**
  *
  */
 static int32_t dsp_processor_gen_filter(ptype_t *filter, uint32_t cnt) {
-  ESP_LOGD(TAG, "%s: generating %lu filters", __func__, (unsigned long)cnt);
-  if ((filter == NULL) && (cnt > 0)) {
-    return ESP_FAIL;
-  }
+	ESP_LOGD(TAG, "%s: generating %lu filters", __func__, (unsigned long)cnt);
+	if ((filter == NULL) && (cnt > 0)) {
+		return ESP_FAIL;
+	}
 
-  for (int n = 0; n < cnt; n++) {
-    switch (filter[n].filtertype) {
-      case HIGHSHELF:
-        dsps_biquad_gen_highShelf_f32(filter[n].coeffs, filter[n].freq,
-                                      filter[n].gain, filter[n].q);
-        break;
+	for (int n = 0; n < cnt; n++) {
+		switch (filter[n].filtertype) {
+		case HIGHSHELF:
+			dsps_biquad_gen_highShelf_f32(filter[n].coeffs, filter[n].freq,
+										  filter[n].gain, filter[n].q);
+			break;
 
-      case LOWSHELF:
-        dsps_biquad_gen_lowShelf_f32(filter[n].coeffs, filter[n].freq,
-                                     filter[n].gain, filter[n].q);
-        break;
+		case LOWSHELF:
+			dsps_biquad_gen_lowShelf_f32(filter[n].coeffs, filter[n].freq,
+										 filter[n].gain, filter[n].q);
+			break;
 
-      case LPF:
-        dsps_biquad_gen_lpf_f32(filter[n].coeffs, filter[n].freq, filter[n].q);
-        break;
+		case LPF:
+			dsps_biquad_gen_lpf_f32(filter[n].coeffs, filter[n].freq,
+									filter[n].q);
+			break;
 
-      case HPF:
-        dsps_biquad_gen_hpf_f32(filter[n].coeffs, filter[n].freq, filter[n].q);
-        break;
+		case HPF:
+			dsps_biquad_gen_hpf_f32(filter[n].coeffs, filter[n].freq,
+									filter[n].q);
+			break;
 
-      default:
-        break;
-    }
-  }
+		default:
+			break;
+		}
+	}
 
-  return ESP_OK;
+	return ESP_OK;
 }
 
 /**
@@ -240,527 +287,568 @@ static int32_t dsp_processor_gen_filter(ptype_t *filter, uint32_t cnt) {
  */
 static inline int16_t float_to_int16_clamped(float value) {
 #ifdef CONFIG_USE_DSP_SOFT_CLIP
-  // Cubic soft clipping: y = x - x^3/3 for |x| < 1, y = 2/3 for |x| >= 1
-  // The output range is [-2/3, 2/3], so we normalize by 3/2 to get [-1, 1]
-  float clipped;
-  if (value > 1.0f) {
-    clipped = 2.0f / 3.0f;
-  } else if (value < -1.0f) {
-    clipped = -2.0f / 3.0f;
-  } else {
-    // Apply cubic soft clip: y = x - x^3/3
-    float x3 = value * value * value;
-    clipped = value - (x3 / 3.0f);
-  }
-  // Normalize from [-2/3, 2/3] to [-1, 1]
-  value = clipped * 1.5f;
+	// Cubic soft clipping: y = x - x^3/3 for |x| < 1, y = 2/3 for |x| >= 1
+	// The output range is [-2/3, 2/3], so we normalize by 3/2 to get [-1, 1]
+	float clipped;
+	if (value > 1.0f) {
+		clipped = 2.0f / 3.0f;
+	} else if (value < -1.0f) {
+		clipped = -2.0f / 3.0f;
+	} else {
+		// Apply cubic soft clip: y = x - x^3/3
+		float x3 = value * value * value;
+		clipped = value - (x3 / 3.0f);
+	}
+	// Normalize from [-2/3, 2/3] to [-1, 1]
+	value = clipped * 1.5f;
 #else
-  // Hard clamp to ±1.0 range
-  if (value > 1.0f) value = 1.0f;
-  if (value < -1.0f) value = -1.0f;
+	// Hard clamp to ±1.0 range
+	if (value > 1.0f)
+		value = 1.0f;
+	if (value < -1.0f)
+		value = -1.0f;
 #endif
-  
-  return (int16_t)(value * INT16_MAX);
+
+	return (int16_t)(value * INT16_MAX);
 }
 
 /**
  *
  */
 int dsp_processor_worker(void *p_pcmChnk, const void *p_scSet) {
-  ESP_LOGV(TAG, "%s: processing audio chunk", __func__);
-  const snapcastSetting_t *scSet = (const snapcastSetting_t *)p_scSet;
-  pcm_chunk_message_t *pcmChnk = (pcm_chunk_message_t *)p_pcmChnk;
-  uint32_t samplerate = scSet->sr;
+	ESP_LOGV(TAG, "%s: processing audio chunk", __func__);
+	const snapcastSetting_t *scSet = (const snapcastSetting_t *)p_scSet;
+	pcm_chunk_message_t *pcmChnk = (pcm_chunk_message_t *)p_pcmChnk;
+	uint32_t samplerate = scSet->sr;
 
-  if (!pcmChnk || !pcmChnk->fragment->payload) {
-    return -1;
-  }
+	if (!pcmChnk || !pcmChnk->fragment->payload) {
+		return -1;
+	}
 
-  int bits = scSet->bits;
-  int ch = scSet->ch;
+	int bits = scSet->bits;
+	int ch = scSet->ch;
 
-  if (bits == 0) {
-    bits = 16;
-  }
+	if (bits == 0) {
+		bits = 16;
+	}
 
-  if (ch == 0) {
-    ch = 2;
-  }
+	if (ch == 0) {
+		ch = 2;
+	}
 
-  if (samplerate == 0) {
-    samplerate = 44100;
-    ESP_LOGW(TAG, "%s: Sample rate is not set, using default: %lu", __func__, (unsigned long)samplerate);
-  }
+	if (samplerate == 0) {
+		samplerate = 44100;
+		ESP_LOGW(TAG, "%s: Sample rate is not set, using default: %lu",
+				 __func__, (unsigned long)samplerate);
+	}
 
-  int16_t len = pcmChnk->fragment->size / ((bits / 8) * ch);
-  int16_t valint;
-  uint16_t i;
-  // volatile needed to ensure 32 bit access
-  volatile uint32_t *audio_tmp =
-      (volatile uint32_t *)(pcmChnk->fragment->payload);
-  
-  // Local working copy of filter parameters
-  static filterParams_t currentFilterParams = {0};
-  static bool paramsInitialized = false;
-  
-  // Initialize on first run
-  if (!paramsInitialized) {
-    currentFilterParams.dspFlow = all_params.active_flow;
-    currentFilterParams.fc_1 = all_params.flow_params[all_params.active_flow].fc_1;
-    currentFilterParams.gain_1 = all_params.flow_params[all_params.active_flow].gain_1;
-    currentFilterParams.fc_3 = all_params.flow_params[all_params.active_flow].fc_3;
-    currentFilterParams.gain_3 = all_params.flow_params[all_params.active_flow].gain_3;
-    paramsInitialized = true;
-  }
+	int16_t len = pcmChnk->fragment->size / ((bits / 8) * ch);
+	int16_t valint;
+	uint16_t i;
+	// volatile needed to ensure 32 bit access
+	volatile uint32_t *audio_tmp =
+		(volatile uint32_t *)(pcmChnk->fragment->payload);
 
-  // If parameters were changed by API, copy them from centralized storage
-  if (paramsChangedSemaphoreHandle && xSemaphoreTake(paramsChangedSemaphoreHandle, 0) == pdTRUE) {
-    // Copy under mutex to avoid torn reads
-    if (params_mutex) {
-      xSemaphoreTake(params_mutex, portMAX_DELAY);
-    } else {
-      ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-    }
-    
-    dspFlows_t aflow = all_params.active_flow;
-    currentFilterParams.dspFlow = aflow;
-    currentFilterParams.fc_1 = all_params.flow_params[aflow].fc_1;
-    currentFilterParams.gain_1 = all_params.flow_params[aflow].gain_1;
-    currentFilterParams.fc_3 = all_params.flow_params[aflow].fc_3;
-    currentFilterParams.gain_3 = all_params.flow_params[aflow].gain_3;
-    if (params_mutex) {
-      xSemaphoreGive(params_mutex);
-    } else {
-      ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-    }
+	// Local working copy of filter parameters
+	static filterParams_t currentFilterParams = {0};
+	static bool paramsInitialized = false;
 
-    ESP_LOGI(TAG, "Applying filter update: flow=%d", currentFilterParams.dspFlow);
-    init = false;
-  }
+	// Initialize on first run
+	if (!paramsInitialized) {
+		currentFilterParams.dspFlow = all_params.active_flow;
+		currentFilterParams.fc_1 =
+			all_params.flow_params[all_params.active_flow].fc_1;
+		currentFilterParams.gain_1 =
+			all_params.flow_params[all_params.active_flow].gain_1;
+		currentFilterParams.fc_3 =
+			all_params.flow_params[all_params.active_flow].fc_3;
+		currentFilterParams.gain_3 =
+			all_params.flow_params[all_params.active_flow].gain_3;
+		paramsInitialized = true;
+	}
 
-  dspFlows_t dspFlow = currentFilterParams.dspFlow;
+	// If parameters were changed by API, copy them from centralized storage
+	if (paramsChangedSemaphoreHandle &&
+		xSemaphoreTake(paramsChangedSemaphoreHandle, 0) == pdTRUE) {
+		// Copy under mutex to avoid torn reads
+		if (params_mutex) {
+			xSemaphoreTake(params_mutex, portMAX_DELAY);
+		} else {
+			ESP_LOGW(TAG,
+					 "%s: params mutex not available, proceeding without mutex",
+					 __func__);
+		}
 
-  if (init == false) {
-    uint32_t cnt = 0;
+		dspFlows_t aflow = all_params.active_flow;
+		currentFilterParams.dspFlow = aflow;
+		currentFilterParams.fc_1 = all_params.flow_params[aflow].fc_1;
+		currentFilterParams.gain_1 = all_params.flow_params[aflow].gain_1;
+		currentFilterParams.fc_3 = all_params.flow_params[aflow].fc_3;
+		currentFilterParams.gain_3 = all_params.flow_params[aflow].gain_3;
+		if (params_mutex) {
+			xSemaphoreGive(params_mutex);
+		} else {
+			ESP_LOGW(TAG,
+					 "%s: params mutex not available, proceeding without mutex",
+					 __func__);
+		}
 
-    if (filter) {
-      free(filter);
-      filter = NULL;
-    }
+		ESP_LOGI(TAG, "Applying filter update: flow=%d",
+				 currentFilterParams.dspFlow);
+		init = false;
+	}
 
-    switch (dspFlow) {
-      case dspfEQBassTreble: {
-        cnt = 4;
+	dspFlows_t dspFlow = currentFilterParams.dspFlow;
 
-        filter =
-            (ptype_t *)heap_caps_malloc(sizeof(ptype_t) * cnt, MALLOC_CAP_8BIT);
-        if (filter) {
-          // simple EQ control of low and high frequencies (bass, treble)
-          float bass_fc = currentFilterParams.fc_1 / samplerate;
-          float bass_gain = currentFilterParams.gain_1;
-          float treble_fc = currentFilterParams.fc_3 / samplerate;
-          float treble_gain = currentFilterParams.gain_3;
+	if (init == false) {
+		uint32_t cnt = 0;
 
-          // filters for CH 0
-          filter[0] = (ptype_t){LOWSHELF, bass_fc, bass_gain,       0.707,
-                                NULL,     NULL,    {0, 0, 0, 0, 0}, {0, 0}};
-          filter[1] = (ptype_t){HIGHSHELF, treble_fc, treble_gain,     0.707,
-                                NULL,      NULL,      {0, 0, 0, 0, 0}, {0, 0}};
-          // filters for CH 1
-          filter[2] = (ptype_t){LOWSHELF, bass_fc, bass_gain,       0.707,
-                                NULL,     NULL,    {0, 0, 0, 0, 0}, {0, 0}};
-          filter[3] = (ptype_t){HIGHSHELF, treble_fc, treble_gain,     0.707,
-                                NULL,      NULL,      {0, 0, 0, 0, 0}, {0, 0}};
+		if (filter) {
+			free(filter);
+			filter = NULL;
+		}
 
-          ESP_LOGI(TAG, "got new setting for dspfEQBassTreble");
-        } else {
-          ESP_LOGE(TAG, "failed to get memory for filter");
-        }
+		switch (dspFlow) {
+		case dspfEQBassTreble: {
+			cnt = 4;
 
-        break;
-      }
+			filter = (ptype_t *)heap_caps_malloc(sizeof(ptype_t) * cnt,
+												 MALLOC_CAP_8BIT);
+			if (filter) {
+				// simple EQ control of low and high frequencies (bass, treble)
+				float bass_fc = currentFilterParams.fc_1 / samplerate;
+				float bass_gain = currentFilterParams.gain_1;
+				float treble_fc = currentFilterParams.fc_3 / samplerate;
+				float treble_gain = currentFilterParams.gain_3;
 
-      case dspfStereo: {
-        cnt = 0;
-        break;
-      }
+				// filters for CH 0
+				filter[0] =
+					(ptype_t){LOWSHELF, bass_fc, bass_gain,		  0.707,
+							  NULL,		NULL,	 {0, 0, 0, 0, 0}, {0, 0}};
+				filter[1] =
+					(ptype_t){HIGHSHELF, treble_fc, treble_gain,	 0.707,
+							  NULL,		 NULL,		{0, 0, 0, 0, 0}, {0, 0}};
+				// filters for CH 1
+				filter[2] =
+					(ptype_t){LOWSHELF, bass_fc, bass_gain,		  0.707,
+							  NULL,		NULL,	 {0, 0, 0, 0, 0}, {0, 0}};
+				filter[3] =
+					(ptype_t){HIGHSHELF, treble_fc, treble_gain,	 0.707,
+							  NULL,		 NULL,		{0, 0, 0, 0, 0}, {0, 0}};
 
-      case dspfBassBoost: {
-        cnt = 2;
+				ESP_LOGI(TAG, "got new setting for dspfEQBassTreble");
+			} else {
+				ESP_LOGE(TAG, "failed to get memory for filter");
+			}
 
-        filter =
-            (ptype_t *)heap_caps_malloc(sizeof(ptype_t) * cnt, MALLOC_CAP_8BIT);
-        if (filter) {
-          float bass_fc = currentFilterParams.fc_1 / samplerate;
-          float bass_gain = currentFilterParams.gain_1;
+			break;
+		}
 
-          filter[0] = (ptype_t){LOWSHELF, bass_fc, bass_gain,       0.707,
-                                NULL,     NULL,    {0, 0, 0, 0, 0}, {0, 0}};
-          filter[1] = (ptype_t){LOWSHELF, bass_fc, bass_gain,       0.707,
-                                NULL,     NULL,    {0, 0, 0, 0, 0}, {0, 0}};
+		case dspfStereo: {
+			cnt = 0;
+			break;
+		}
 
-          ESP_LOGI(TAG, "got new setting for dspfBassBoost: fc=%.1f gain=%.1f", 
-                   currentFilterParams.fc_1, currentFilterParams.gain_1);
-        } else {
-          ESP_LOGE(TAG, "failed to get memory for filter");
-        }
+		case dspfBassBoost: {
+			cnt = 2;
 
-        break;
-      }
+			filter = (ptype_t *)heap_caps_malloc(sizeof(ptype_t) * cnt,
+												 MALLOC_CAP_8BIT);
+			if (filter) {
+				float bass_fc = currentFilterParams.fc_1 / samplerate;
+				float bass_gain = currentFilterParams.gain_1;
 
-      case dspfBiamp: {
-        cnt = 4;
+				filter[0] =
+					(ptype_t){LOWSHELF, bass_fc, bass_gain,		  0.707,
+							  NULL,		NULL,	 {0, 0, 0, 0, 0}, {0, 0}};
+				filter[1] =
+					(ptype_t){LOWSHELF, bass_fc, bass_gain,		  0.707,
+							  NULL,		NULL,	 {0, 0, 0, 0, 0}, {0, 0}};
 
-        filter =
-            (ptype_t *)heap_caps_malloc(sizeof(ptype_t) * cnt, MALLOC_CAP_8BIT);
-        if (filter) {
-          float lp_fc = currentFilterParams.fc_1 / samplerate;
-          float lp_gain = currentFilterParams.gain_1;
-          float hp_fc = currentFilterParams.fc_3 / samplerate;
-          float hp_gain = currentFilterParams.gain_3;
+				ESP_LOGI(TAG,
+						 "got new setting for dspfBassBoost: fc=%.1f gain=%.1f",
+						 currentFilterParams.fc_1, currentFilterParams.gain_1);
+			} else {
+				ESP_LOGE(TAG, "failed to get memory for filter");
+			}
 
-          filter[0] = (ptype_t){LPF,  lp_fc, lp_gain,         0.707,
-                                NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
-          filter[1] = (ptype_t){LPF,  lp_fc, lp_gain,         0.707,
-                                NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
-          filter[2] = (ptype_t){HPF,  hp_fc, hp_gain,         0.707,
-                                NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
-          filter[3] = (ptype_t){HPF,  hp_fc, hp_gain,         0.707,
-                                NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
+			break;
+		}
 
-          ESP_LOGI(TAG, "got new setting for dspfBiamp");
-        } else {
-          ESP_LOGE(TAG, "failed to get memory for filter");
-        }
+		case dspfBiamp: {
+			cnt = 4;
 
-        break;
-      }
+			filter = (ptype_t *)heap_caps_malloc(sizeof(ptype_t) * cnt,
+												 MALLOC_CAP_8BIT);
+			if (filter) {
+				float lp_fc = currentFilterParams.fc_1 / samplerate;
+				float lp_gain = currentFilterParams.gain_1;
+				float hp_fc = currentFilterParams.fc_3 / samplerate;
+				float hp_gain = currentFilterParams.gain_3;
 
-      case dspf2DOT1: {  // Process audio L + R LOW PASS FILTER
-        cnt = 0;
-        dspFlow = dspfStereo;
+				filter[0] = (ptype_t){LPF,	lp_fc, lp_gain,			0.707,
+									  NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
+				filter[1] = (ptype_t){LPF,	lp_fc, lp_gain,			0.707,
+									  NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
+				filter[2] = (ptype_t){HPF,	hp_fc, hp_gain,			0.707,
+									  NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
+				filter[3] = (ptype_t){HPF,	hp_fc, hp_gain,			0.707,
+									  NULL, NULL,  {0, 0, 0, 0, 0}, {0, 0}};
 
-        ESP_LOGW(TAG, "dspf2DOT1, not implemented yet, using stereo instead");
-      } break;
+				ESP_LOGI(TAG, "got new setting for dspfBiamp");
+			} else {
+				ESP_LOGE(TAG, "failed to get memory for filter");
+			}
 
-      case dspfFunkyHonda: {  // Process audio L + R LOW PASS FILTER
-        cnt = 0;
-        dspFlow = dspfStereo;
+			break;
+		}
 
-        ESP_LOGW(TAG,
-                 "dspfFunkyHonda, not implemented yet, using stereo instead");
-        break;
-      }
+		case dspf2DOT1: { // Process audio L + R LOW PASS FILTER
+			cnt = 0;
+			dspFlow = dspfStereo;
 
-      default: {
-        break;
-      }
-    }
+			ESP_LOGW(TAG,
+					 "dspf2DOT1, not implemented yet, using stereo instead");
+		} break;
 
-    dsp_processor_gen_filter(filter, cnt);
+		case dspfFunkyHonda: { // Process audio L + R LOW PASS FILTER
+			cnt = 0;
+			dspFlow = dspfStereo;
 
-    init = true;
-  }
+			ESP_LOGW(
+				TAG,
+				"dspfFunkyHonda, not implemented yet, using stereo instead");
+			break;
+		}
 
-  // only process data if it is valid
-  if (audio_tmp) {
-    sbuffer0 = (float *)heap_caps_malloc(sizeof(float) * DSP_PROCESSOR_LEN,
-                                         MALLOC_CAP_8BIT);
-    if (sbuffer0 == NULL) {
-      ESP_LOGE(TAG, "No Memory allocated for dsp_processor sbuffer0");
+		default: {
+			break;
+		}
+		}
 
-      return -1;
-    }
+		dsp_processor_gen_filter(filter, cnt);
 
-    sbufout0 = (float *)heap_caps_malloc(sizeof(float) * DSP_PROCESSOR_LEN,
-                                         MALLOC_CAP_8BIT);
-    if (sbufout0 == NULL) {
-      ESP_LOGE(TAG, "No Memory allocated for dsp_processor sbufout0");
+		init = true;
+	}
 
-      free(sbuffer0);
+	// only process data if it is valid
+	if (audio_tmp) {
+		sbuffer0 = (float *)heap_caps_malloc(sizeof(float) * DSP_PROCESSOR_LEN,
+											 MALLOC_CAP_8BIT);
+		if (sbuffer0 == NULL) {
+			ESP_LOGE(TAG, "No Memory allocated for dsp_processor sbuffer0");
 
-      return -1;
-    }
+			return -1;
+		}
+
+		sbufout0 = (float *)heap_caps_malloc(sizeof(float) * DSP_PROCESSOR_LEN,
+											 MALLOC_CAP_8BIT);
+		if (sbufout0 == NULL) {
+			ESP_LOGE(TAG, "No Memory allocated for dsp_processor sbufout0");
+
+			free(sbuffer0);
+
+			return -1;
+		}
 
 #if CONFIG_SNAPCLIENT_MIX_LR_TO_MONO
-    if (ch == 2) {
-      for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
-        volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
-        uint32_t max = DSP_PROCESSOR_LEN;
-        uint32_t test = len - k;
+		if (ch == 2) {
+			for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
+				volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
+				uint32_t max = DSP_PROCESSOR_LEN;
+				uint32_t test = len - k;
 
-        if (test < DSP_PROCESSOR_LEN) {
-          max = test;
-        }
+				if (test < DSP_PROCESSOR_LEN) {
+					max = test;
+				}
 
-        for (i = 0; i < max; i++) {
-          int16_t channel0 = (int16_t)((tmp[i] & 0xFFFF0000) >> 16);
-          int16_t channel1 = (int16_t)(tmp[i] & 0x0000FFFF);
-          int16_t mixMono = ((int32_t)channel0 + (int32_t)channel1) / 2;
+				for (i = 0; i < max; i++) {
+					int16_t channel0 = (int16_t)((tmp[i] & 0xFFFF0000) >> 16);
+					int16_t channel1 = (int16_t)(tmp[i] & 0x0000FFFF);
+					int16_t mixMono =
+						((int32_t)channel0 + (int32_t)channel1) / 2;
 
-          tmp[i] = ((uint32_t)mixMono << 16) | ((uint32_t)mixMono & 0x0000FFFF);
-        }
-      }
-    }
+					tmp[i] = ((uint32_t)mixMono << 16) |
+							 ((uint32_t)mixMono & 0x0000FFFF);
+				}
+			}
+		}
 #endif
 
-    switch (dspFlow) {
-      case dspfEQBassTreble: {
-        for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
-          volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
-          uint32_t max = DSP_PROCESSOR_LEN;
-          uint32_t test = len - k;
+		switch (dspFlow) {
+		case dspfEQBassTreble: {
+			for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
+				volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
+				uint32_t max = DSP_PROCESSOR_LEN;
+				uint32_t test = len - k;
 
-          if (test < DSP_PROCESSOR_LEN) {
-            max = test;
-          }
+				if (test < DSP_PROCESSOR_LEN) {
+					max = test;
+				}
 
-          // channel 0
-          for (i = 0; i < max; i++) {
-            sbuffer0[i] = dynamic_vol * /*0.5 **/
-                          ((float)((int16_t)(tmp[i] & 0xFFFF))) / INT16_MAX;
-          }
+				// channel 0
+				for (i = 0; i < max; i++) {
+					sbuffer0[i] = dynamic_vol * /*0.5 **/
+								  ((float)((int16_t)(tmp[i] & 0xFFFF))) /
+								  INT16_MAX;
+				}
 
-          // BASS
-          dsps_biquad_f32(sbuffer0, sbufout0, max, filter[0].coeffs, filter[0].w);
-          // TREBLE
-          dsps_biquad_f32(sbufout0, sbuffer0, max, filter[1].coeffs, filter[1].w);
+				// BASS
+				dsps_biquad_f32(sbuffer0, sbufout0, max, filter[0].coeffs,
+								filter[0].w);
+				// TREBLE
+				dsps_biquad_f32(sbufout0, sbuffer0, max, filter[1].coeffs,
+								filter[1].w);
 
-          for (i = 0; i < max; i++) {
-            valint = float_to_int16_clamped(sbuffer0[i]);
-            tmp[i] =
-                (volatile uint32_t)((tmp[i] & 0xFFFF0000) + (uint32_t)valint);
-          }
+				for (i = 0; i < max; i++) {
+					valint = float_to_int16_clamped(sbuffer0[i]);
+					tmp[i] = (volatile uint32_t)((tmp[i] & 0xFFFF0000) +
+												 (uint32_t)valint);
+				}
 
-          // channel 1
-          for (i = 0; i < max; i++) {
-            sbuffer0[i] = dynamic_vol * /*0.5 **/
-                          ((float)((int16_t)((tmp[i] & 0xFFFF0000) >> 16))) /
-                          INT16_MAX;
-          }
+				// channel 1
+				for (i = 0; i < max; i++) {
+					sbuffer0[i] =
+						dynamic_vol * /*0.5 **/
+						((float)((int16_t)((tmp[i] & 0xFFFF0000) >> 16))) /
+						INT16_MAX;
+				}
 
-          // BASS
-          dsps_biquad_f32(sbuffer0, sbufout0, max, filter[2].coeffs, filter[2].w);
-          // TREBLE
-          dsps_biquad_f32(sbufout0, sbuffer0, max, filter[3].coeffs, filter[3].w);
+				// BASS
+				dsps_biquad_f32(sbuffer0, sbufout0, max, filter[2].coeffs,
+								filter[2].w);
+				// TREBLE
+				dsps_biquad_f32(sbufout0, sbuffer0, max, filter[3].coeffs,
+								filter[3].w);
 
-          for (i = 0; i < max; i++) {
-            valint = float_to_int16_clamped(sbuffer0[i]);
-            tmp[i] = (volatile uint32_t)((tmp[i] & 0xFFFF) +
-                                         ((uint32_t)valint << 16));
-          }
-        }
+				for (i = 0; i < max; i++) {
+					valint = float_to_int16_clamped(sbuffer0[i]);
+					tmp[i] = (volatile uint32_t)((tmp[i] & 0xFFFF) +
+												 ((uint32_t)valint << 16));
+				}
+			}
 
-        break;
-      }
+			break;
+		}
 
-      case dspfStereo: {
+		case dspfStereo: {
 #if SNAPCAST_USE_SOFT_VOL
-        for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
-          volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
-          uint32_t max = DSP_PROCESSOR_LEN;
-          uint32_t test = len - k;
+			for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
+				volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
+				uint32_t max = DSP_PROCESSOR_LEN;
+				uint32_t test = len - k;
 
-          if (test < DSP_PROCESSOR_LEN) {
-            max = test;
-          }
+				if (test < DSP_PROCESSOR_LEN) {
+					max = test;
+				}
 
-          // set volume
-          if (dynamic_vol != 1.0) {
-            for (i = 0; i < max; i++) {
-              tmp[i] =
-                  ((uint32_t)(dynamic_vol *
-                              ((float)((int16_t)((tmp[i] & 0xFFFF0000) >> 16))))
-                   << 16) +
-                  (uint32_t)(dynamic_vol *
-                             ((float)((int16_t)(tmp[i] & 0xFFFF))));
-            }
-          }
-        }
+				// set volume
+				if (dynamic_vol != 1.0) {
+					for (i = 0; i < max; i++) {
+						tmp[i] =
+							((uint32_t)(dynamic_vol *
+										((float)((
+											int16_t)((tmp[i] & 0xFFFF0000) >>
+													 16))))
+							 << 16) +
+							(uint32_t)(dynamic_vol *
+									   ((float)((int16_t)(tmp[i] & 0xFFFF))));
+					}
+				}
+			}
 #endif
 
-        break;
-      }
+			break;
+		}
 
-      case dspfBassBoost: {  // Low shelf bass boost with adjustable gain
-        for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
-          volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
-          uint32_t max = DSP_PROCESSOR_LEN;
-          uint32_t test = len - k;
+		case dspfBassBoost: { // Low shelf bass boost with adjustable gain
+			for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
+				volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
+				uint32_t max = DSP_PROCESSOR_LEN;
+				uint32_t test = len - k;
 
-          if (test < DSP_PROCESSOR_LEN) {
-            max = test;
-          }
+				if (test < DSP_PROCESSOR_LEN) {
+					max = test;
+				}
 
-          // channel 0
-          for (i = 0; i < max; i++) {
-            sbuffer0[i] =
-                dynamic_vol * 
-                ((float)((int16_t)(tmp[i] & 0xFFFF))) / INT16_MAX;
-          }
-          dsps_biquad_f32(sbuffer0, sbufout0, max, filter[0].coeffs, filter[0].w);
+				// channel 0
+				for (i = 0; i < max; i++) {
+					sbuffer0[i] = dynamic_vol *
+								  ((float)((int16_t)(tmp[i] & 0xFFFF))) /
+								  INT16_MAX;
+				}
+				dsps_biquad_f32(sbuffer0, sbufout0, max, filter[0].coeffs,
+								filter[0].w);
 
-          for (i = 0; i < max; i++) {
-            valint = float_to_int16_clamped(sbufout0[i]);
-            tmp[i] = (tmp[i] & 0xFFFF0000) + (uint32_t)valint;
-          }
+				for (i = 0; i < max; i++) {
+					valint = float_to_int16_clamped(sbufout0[i]);
+					tmp[i] = (tmp[i] & 0xFFFF0000) + (uint32_t)valint;
+				}
 
-          // channel 1
-          for (i = 0; i < max; i++) {
-            sbuffer0[i] = dynamic_vol *
-                          ((float)((int16_t)((tmp[i] & 0xFFFF0000) >> 16))) /
-                          INT16_MAX;
-          }
-          dsps_biquad_f32(sbuffer0, sbufout0, max, filter[1].coeffs, filter[1].w);
+				// channel 1
+				for (i = 0; i < max; i++) {
+					sbuffer0[i] =
+						dynamic_vol *
+						((float)((int16_t)((tmp[i] & 0xFFFF0000) >> 16))) /
+						INT16_MAX;
+				}
+				dsps_biquad_f32(sbuffer0, sbufout0, max, filter[1].coeffs,
+								filter[1].w);
 
-          for (i = 0; i < max; i++) {
-            valint = float_to_int16_clamped(sbufout0[i]);
-            tmp[i] = (tmp[i] & 0xFFFF) + ((uint32_t)valint << 16);
-          }
-        }
+				for (i = 0; i < max; i++) {
+					valint = float_to_int16_clamped(sbufout0[i]);
+					tmp[i] = (tmp[i] & 0xFFFF) + ((uint32_t)valint << 16);
+				}
+			}
 
-        break;
-      }
+			break;
+		}
 
-      case dspfBiamp: {
-        for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
-          volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
-          uint32_t max = DSP_PROCESSOR_LEN;
-          uint32_t test = len - k;
+		case dspfBiamp: {
+			for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
+				volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
+				uint32_t max = DSP_PROCESSOR_LEN;
+				uint32_t test = len - k;
 
-          if (test < DSP_PROCESSOR_LEN) {
-            max = test;
-          }
+				if (test < DSP_PROCESSOR_LEN) {
+					max = test;
+				}
 
-          // Process audio ch0 LOW PASS FILTER
-          for (i = 0; i < max; i++) {
-            sbuffer0[i] =
-                dynamic_vol * ((float)((int16_t)(tmp[i] & 0xFFFF))) / INT16_MAX;
-          }
-          dsps_biquad_f32(sbuffer0, sbufout0, max, filter[0].coeffs, filter[0].w);
-          dsps_biquad_f32(sbufout0, sbuffer0, max, filter[1].coeffs, filter[1].w);
+				// Process audio ch0 LOW PASS FILTER
+				for (i = 0; i < max; i++) {
+					sbuffer0[i] = dynamic_vol *
+								  ((float)((int16_t)(tmp[i] & 0xFFFF))) /
+								  INT16_MAX;
+				}
+				dsps_biquad_f32(sbuffer0, sbufout0, max, filter[0].coeffs,
+								filter[0].w);
+				dsps_biquad_f32(sbufout0, sbuffer0, max, filter[1].coeffs,
+								filter[1].w);
 
-          for (i = 0; i < max; i++) {
-            valint = float_to_int16_clamped(sbuffer0[i]);
-            tmp[i] = (tmp[i] & 0xFFFF0000) + (uint32_t)valint;
-          }
+				for (i = 0; i < max; i++) {
+					valint = float_to_int16_clamped(sbuffer0[i]);
+					tmp[i] = (tmp[i] & 0xFFFF0000) + (uint32_t)valint;
+				}
 
-          // Process audio ch1 HIGH PASS FILTER
-          for (i = 0; i < max; i++) {
-            sbuffer0[i] = dynamic_vol *
-                          ((float)((int16_t)((tmp[i] & 0xFFFF0000) >> 16))) /
-                          INT16_MAX;
-          }
-          dsps_biquad_f32(sbuffer0, sbufout0, max, filter[2].coeffs, filter[2].w);
-          dsps_biquad_f32(sbufout0, sbuffer0, max, filter[3].coeffs, filter[3].w);
+				// Process audio ch1 HIGH PASS FILTER
+				for (i = 0; i < max; i++) {
+					sbuffer0[i] =
+						dynamic_vol *
+						((float)((int16_t)((tmp[i] & 0xFFFF0000) >> 16))) /
+						INT16_MAX;
+				}
+				dsps_biquad_f32(sbuffer0, sbufout0, max, filter[2].coeffs,
+								filter[2].w);
+				dsps_biquad_f32(sbufout0, sbuffer0, max, filter[3].coeffs,
+								filter[3].w);
 
-          for (i = 0; i < max; i++) {
-            valint = float_to_int16_clamped(sbuffer0[i]);
-            tmp[i] = (tmp[i] & 0xFFFF) + ((uint32_t)valint << 16);
-          }
-        }
+				for (i = 0; i < max; i++) {
+					valint = float_to_int16_clamped(sbuffer0[i]);
+					tmp[i] = (tmp[i] & 0xFFFF) + ((uint32_t)valint << 16);
+				}
+			}
 
-        break;
-      }
+			break;
+		}
 
-      case dspf2DOT1: {  // Process audio L + R LOW PASS FILTER
-        /*
-           dsps_biquad_f32(sbuffer2, sbuftmp0, len, bq[0].coeffs, bq[0].w);
-           dsps_biquad_f32(sbuftmp0, sbufout2, len, bq[1].coeffs, bq[1].w);
+		case dspf2DOT1: { // Process audio L + R LOW PASS FILTER
+			/*
+			   dsps_biquad_f32(sbuffer2, sbuftmp0, len, bq[0].coeffs, bq[0].w);
+			   dsps_biquad_f32(sbuftmp0, sbufout2, len, bq[1].coeffs, bq[1].w);
 
-           // Process audio L HIGH PASS FILTER
-           dsps_biquad_f32(sbuffer0, sbuftmp0, len, bq[2].coeffs, bq[2].w);
-           dsps_biquad_f32(sbuftmp0, sbufout0, len, bq[3].coeffs, bq[3].w);
+			   // Process audio L HIGH PASS FILTER
+			   dsps_biquad_f32(sbuffer0, sbuftmp0, len, bq[2].coeffs, bq[2].w);
+			   dsps_biquad_f32(sbuftmp0, sbufout0, len, bq[3].coeffs, bq[3].w);
 
-           // Process audio R HIGH PASS FILTER
-           dsps_biquad_f32(sbuffer1, sbuftmp0, len, bq[4].coeffs, bq[4].w);
-           dsps_biquad_f32(sbuftmp0, sbufout1, len, bq[5].coeffs, bq[5].w);
+			   // Process audio R HIGH PASS FILTER
+			   dsps_biquad_f32(sbuffer1, sbuftmp0, len, bq[4].coeffs, bq[4].w);
+			   dsps_biquad_f32(sbuftmp0, sbufout1, len, bq[5].coeffs, bq[5].w);
 
-           int16_t valint[5];
-           for (uint16_t i = 0; i < len; i++) {
-             valint[0] =
-                 (muteCH[0] == 1) ? (int16_t)0 : (int16_t)(sbufout0[i] *
-           INT16_MAX); valint[1] = (muteCH[1] == 1) ? (int16_t)0 :
-           (int16_t)(sbufout1[i] * INT16_MAX); valint[2] = (muteCH[2] == 1) ?
-           (int16_t)0 : (int16_t)(sbufout2[i] * INT16_MAX); dsp_audio[i * 4 + 0]
-           = (valint[2] & 0xff); dsp_audio[i * 4 + 1] = ((valint[2] & 0xff00) >>
-           8); dsp_audio[i * 4 + 2] = 0; dsp_audio[i * 4 + 3] = 0;
+			   int16_t valint[5];
+			   for (uint16_t i = 0; i < len; i++) {
+				 valint[0] =
+					 (muteCH[0] == 1) ? (int16_t)0 : (int16_t)(sbufout0[i] *
+			   INT16_MAX); valint[1] = (muteCH[1] == 1) ? (int16_t)0 :
+			   (int16_t)(sbufout1[i] * INT16_MAX); valint[2] = (muteCH[2] == 1)
+			   ? (int16_t)0 : (int16_t)(sbufout2[i] * INT16_MAX); dsp_audio[i *
+			   4 + 0] = (valint[2] & 0xff); dsp_audio[i * 4 + 1] = ((valint[2] &
+			   0xff00) >> 8); dsp_audio[i * 4 + 2] = 0; dsp_audio[i * 4 + 3] =
+			   0;
 
-             dsp_audio1[i * 4 + 0] = (valint[0] & 0xff);
-             dsp_audio1[i * 4 + 1] = ((valint[0] & 0xff00) >> 8);
-             dsp_audio1[i * 4 + 2] = (valint[1] & 0xff);
-             dsp_audio1[i * 4 + 3] = ((valint[1] & 0xff00) >> 8);
-           }
+				 dsp_audio1[i * 4 + 0] = (valint[0] & 0xff);
+				 dsp_audio1[i * 4 + 1] = ((valint[0] & 0xff00) >> 8);
+				 dsp_audio1[i * 4 + 2] = (valint[1] & 0xff);
+				 dsp_audio1[i * 4 + 3] = ((valint[1] & 0xff00) >> 8);
+			   }
 
-           // TODO: this copy could be avoided if dsp_audio buffers are
-           // allocated dynamically and pointers are exchanged after
-           // audio was freed
-           memcpy(audio, dsp_audio, chunk_size);
+			   // TODO: this copy could be avoided if dsp_audio buffers are
+			   // allocated dynamically and pointers are exchanged after
+			   // audio was freed
+			   memcpy(audio, dsp_audio, chunk_size);
 
-           ESP_LOGW(TAG, "Don't know what to do with dsp_audio1");
-     */
-        ESP_LOGW(TAG, "dspf2DOT1, not implemented yet, using stereo instead");
-      } break;
+			   ESP_LOGW(TAG, "Don't know what to do with dsp_audio1");
+		 */
+			ESP_LOGW(TAG,
+					 "dspf2DOT1, not implemented yet, using stereo instead");
+		} break;
 
-      case dspfFunkyHonda: {  // Process audio L + R LOW PASS FILTER
-        /*
-          dsps_biquad_f32(sbuffer2, sbuftmp0, len, bq[0].coeffs, bq[0].w);
-          dsps_biquad_f32(sbuftmp0, sbufout2, len, bq[1].coeffs, bq[1].w);
+		case dspfFunkyHonda: { // Process audio L + R LOW PASS FILTER
+			/*
+			  dsps_biquad_f32(sbuffer2, sbuftmp0, len, bq[0].coeffs, bq[0].w);
+			  dsps_biquad_f32(sbuftmp0, sbufout2, len, bq[1].coeffs, bq[1].w);
 
-          // Process audio L HIGH PASS FILTER
-          dsps_biquad_f32(sbuffer0, sbuftmp0, len, bq[2].coeffs, bq[2].w);
-          dsps_biquad_f32(sbuftmp0, sbufout0, len, bq[3].coeffs, bq[3].w);
+			  // Process audio L HIGH PASS FILTER
+			  dsps_biquad_f32(sbuffer0, sbuftmp0, len, bq[2].coeffs, bq[2].w);
+			  dsps_biquad_f32(sbuftmp0, sbufout0, len, bq[3].coeffs, bq[3].w);
 
-          // Process audio R HIGH PASS FILTER
-          dsps_biquad_f32(sbuffer1, sbuftmp0, len, bq[4].coeffs, bq[4].w);
-          dsps_biquad_f32(sbuftmp0, sbufout1, len, bq[5].coeffs, bq[5].w);
+			  // Process audio R HIGH PASS FILTER
+			  dsps_biquad_f32(sbuffer1, sbuftmp0, len, bq[4].coeffs, bq[4].w);
+			  dsps_biquad_f32(sbuftmp0, sbufout1, len, bq[5].coeffs, bq[5].w);
 
-          uint16_t scale = 16384;  // INT16_MAX
-          int16_t valint[5];
-          for (uint16_t i = 0; i < len; i++) {
-            valint[0] =
-                (muteCH[0] == 1) ? (int16_t)0 : (int16_t)(sbufout0[i] * scale);
-            valint[1] =
-                (muteCH[1] == 1) ? (int16_t)0 : (int16_t)(sbufout1[i] * scale);
-            valint[2] =
-                (muteCH[2] == 1) ? (int16_t)0 : (int16_t)(sbufout2[i] * scale);
-            valint[3] = valint[0] + valint[2];
-            valint[4] = -valint[2];
-            valint[5] = -valint[1] - valint[2];
-            dsp_audio[i * 4 + 0] = (valint[3] & 0xff);
-            dsp_audio[i * 4 + 1] = ((valint[3] & 0xff00) >> 8);
-            dsp_audio[i * 4 + 2] = (valint[2] & 0xff);
-            dsp_audio[i * 4 + 3] = ((valint[2] & 0xff00) >> 8);
+			  uint16_t scale = 16384;  // INT16_MAX
+			  int16_t valint[5];
+			  for (uint16_t i = 0; i < len; i++) {
+				valint[0] =
+					(muteCH[0] == 1) ? (int16_t)0 : (int16_t)(sbufout0[i] *
+			  scale); valint[1] = (muteCH[1] == 1) ? (int16_t)0 :
+			  (int16_t)(sbufout1[i] * scale); valint[2] = (muteCH[2] == 1) ?
+			  (int16_t)0 : (int16_t)(sbufout2[i] * scale); valint[3] = valint[0]
+			  + valint[2]; valint[4] = -valint[2]; valint[5] = -valint[1] -
+			  valint[2]; dsp_audio[i * 4 + 0] = (valint[3] & 0xff); dsp_audio[i
+			  * 4 + 1] = ((valint[3] & 0xff00) >> 8); dsp_audio[i * 4 + 2] =
+			  (valint[2] & 0xff); dsp_audio[i * 4 + 3] = ((valint[2] & 0xff00)
+			  >> 8);
 
-            dsp_audio1[i * 4 + 0] = (valint[4] & 0xff);
-            dsp_audio1[i * 4 + 1] = ((valint[4] & 0xff00) >> 8);
-            dsp_audio1[i * 4 + 2] = (valint[5] & 0xff);
-            dsp_audio1[i * 4 + 3] = ((valint[5] & 0xff00) >> 8);
-          }
+				dsp_audio1[i * 4 + 0] = (valint[4] & 0xff);
+				dsp_audio1[i * 4 + 1] = ((valint[4] & 0xff00) >> 8);
+				dsp_audio1[i * 4 + 2] = (valint[5] & 0xff);
+				dsp_audio1[i * 4 + 3] = ((valint[5] & 0xff00) >> 8);
+			  }
 
-          // TODO: this copy could be avoided if dsp_audio buffers are
-          // allocated dynamically and pointers are exchanged after
-          // audio was freed
-          memcpy(audio, dsp_audio, chunk_size);
+			  // TODO: this copy could be avoided if dsp_audio buffers are
+			  // allocated dynamically and pointers are exchanged after
+			  // audio was freed
+			  memcpy(audio, dsp_audio, chunk_size);
 
-          ESP_LOGW(TAG, "Don't know what to do with dsp_audio1");
-          */
-        ESP_LOGW(TAG,
-                 "dspfFunkyHonda, not implemented yet, using stereo instead");
-      } break;
+			  ESP_LOGW(TAG, "Don't know what to do with dsp_audio1");
+			  */
+			ESP_LOGW(
+				TAG,
+				"dspfFunkyHonda, not implemented yet, using stereo instead");
+		} break;
 
-      default: {
-      } break;
-    }
+		default: {
+		} break;
+		}
 
-    free(sbuffer0);
-    sbuffer0 = NULL;
+		free(sbuffer0);
+		sbuffer0 = NULL;
 
-    free(sbufout0);
-    sbufout0 = NULL;
-  }
+		free(sbufout0);
+		sbufout0 = NULL;
+	}
 
-  return 0;
+	return 0;
 }
 
 // void dsp_set_xoverfreq(uint8_t freqh, uint8_t freql, uint32_t samplerate) {
@@ -794,105 +882,162 @@ int dsp_processor_worker(void *p_pcmChnk, const void *p_scSet) {
  *
  */
 void dsp_processor_set_volome(double volume) {
-  ESP_LOGD(TAG, "%s: volume=%f", __func__, volume);
-  if (volume >= 0 && volume <= 1.0) {
-     // Apply exponential volume curve for perceptually linear loudness.
-     // Human hearing is logarithmic (~6 dB per doubling), so we use
-     // pow(volume, CURVE_POWER) to compress the low end and expand the high end.
-     // This gives fine control at low volumes while still reaching full
-     // volume at slider position 100%.
-    double curve = (volume > 0.0) ? pow(volume, CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER) : 0.0;
-    ESP_LOGI(TAG, "Set volume to %f (raw %f, curve_power=%.1f)", curve,
-             volume, (float) CONFIG_SNAPCLIENT_VOLUME_CURVE_POWER);
-    dynamic_vol = curve;
-   }
+	ESP_LOGD(TAG, "%s: volume=%f", __func__, volume);
+	if (volume >= 0 && volume <= 1.0) {
+		last_slider_position = volume;
+		double curve;
+		if (volume <= VOLUME_CURVE_ROLLOFF_THRESHOLD) {
+			// Linear roll-off near zero: interpolates from 0 at slider=0
+			// to the exponential curve value at the threshold point.
+			// Ensures true silence at slider=0 with smooth transition.
+			curve =
+				volume / VOLUME_CURVE_ROLLOFF_THRESHOLD * curve_threshold_val;
+		} else {
+			// Exponential curve for the rest of the slider range
+			curve = curve_a * expf((float)volume * curve_b);
+		}
+		ESP_LOGI(TAG, "Set volume to %f (raw %f, range=%.0f dB)", curve, volume,
+				 volume_curve_db_range);
+		dynamic_vol = curve;
+	}
+}
+
+void dsp_processor_set_volume_curve_db_range(float db_range) {
+	ESP_LOGD(TAG, "%s: db_range=%f, current_dynamic_vol=%f", __func__, db_range,
+			 dynamic_vol);
+	if (db_range < 0.0f || db_range > 90.0f) {
+		ESP_LOGW(TAG, "%s: db_range %f out of range (0-90), clamping", __func__,
+				 db_range);
+		db_range = fminf(fmaxf(db_range, 0.0f), 90.0f);
+	}
+	if (db_range != volume_curve_db_range) {
+		float old_dynamic = dynamic_vol;
+		float old_db_range = volume_curve_db_range;
+		volume_curve_db_range = db_range;
+		compute_curve();
+
+		// Recompute dynamic_vol from the last slider position using the
+		// new curve so the change takes effect immediately rather than
+		// waiting for the next volume set call.
+		double new_curve;
+		if (last_slider_position <= VOLUME_CURVE_ROLLOFF_THRESHOLD) {
+			new_curve = last_slider_position / VOLUME_CURVE_ROLLOFF_THRESHOLD *
+						curve_threshold_val;
+		} else {
+			new_curve = curve_a * expf((float)last_slider_position * curve_b);
+		}
+		dynamic_vol = new_curve;
+
+		ESP_LOGI(TAG,
+				 "Volume curve updated: %.0f->%.0f dB, "
+				 "dynamic_vol: %f->%f (slider=%.3f)",
+				 old_db_range, volume_curve_db_range, old_dynamic, new_curve,
+				 last_slider_position);
+		// Persist to NVS so it survives reboots
+		dsp_settings_save_volume_curve_db_range(db_range);
+	}
 }
 /**
  * Set parameters for a specific flow (without switching to it)
  */
-esp_err_t dsp_processor_set_params_for_flow(dspFlows_t flow, const filterParams_t *params) {
-  ESP_LOGD(TAG, "%s: setting params for flow %d", __func__, flow);
-  
-  if (params == NULL || flow < 0 || flow >= DSP_FLOW_COUNT) {
-    return ESP_ERR_INVALID_ARG;
-  }
-  
-  // Update centralized storage for this specific flow
-  if (params_mutex) {
-    xSemaphoreTake(params_mutex, portMAX_DELAY);
-  } else {
-    ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-  }
+esp_err_t dsp_processor_set_params_for_flow(dspFlows_t flow,
+											const filterParams_t *params) {
+	ESP_LOGD(TAG, "%s: setting params for flow %d", __func__, flow);
 
-  all_params.flow_params[flow].fc_1 = params->fc_1;
-  all_params.flow_params[flow].gain_1 = params->gain_1;
-  all_params.flow_params[flow].fc_3 = params->fc_3;
-  all_params.flow_params[flow].gain_3 = params->gain_3;
-  if (params_mutex) {
-    xSemaphoreGive(params_mutex);
-  } else {
-    ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-  }
-  
-  // If this is the active flow, also update the legacy filterParams and notify worker
-  if (params_mutex) {
-    xSemaphoreTake(params_mutex, portMAX_DELAY);
-  } else {
-    ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-  }
-  
-    bool is_active = (flow == all_params.active_flow);
-  if (params_mutex) {
-    xSemaphoreGive(params_mutex);
-  } else {
-    ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-  }
+	if (params == NULL || flow < 0 || flow >= DSP_FLOW_COUNT) {
+		return ESP_ERR_INVALID_ARG;
+	}
 
-  if (is_active) {
-    filterParams_t temp_params;
-    temp_params.dspFlow = flow;
-    temp_params.fc_1 = params->fc_1;
-    temp_params.gain_1 = params->gain_1;
-    temp_params.fc_3 = params->fc_3;
-    temp_params.gain_3 = params->gain_3;
-    
-    return dsp_processor_update_filter_params(&temp_params);
-  }
-  
-  return ESP_OK;
+	// Update centralized storage for this specific flow
+	if (params_mutex) {
+		xSemaphoreTake(params_mutex, portMAX_DELAY);
+	} else {
+		ESP_LOGW(TAG,
+				 "%s: params mutex not available, proceeding without mutex",
+				 __func__);
+	}
+
+	all_params.flow_params[flow].fc_1 = params->fc_1;
+	all_params.flow_params[flow].gain_1 = params->gain_1;
+	all_params.flow_params[flow].fc_3 = params->fc_3;
+	all_params.flow_params[flow].gain_3 = params->gain_3;
+	if (params_mutex) {
+		xSemaphoreGive(params_mutex);
+	} else {
+		ESP_LOGW(TAG,
+				 "%s: params mutex not available, proceeding without mutex",
+				 __func__);
+	}
+
+	// If this is the active flow, also update the legacy filterParams and
+	// notify worker
+	if (params_mutex) {
+		xSemaphoreTake(params_mutex, portMAX_DELAY);
+	} else {
+		ESP_LOGW(TAG,
+				 "%s: params mutex not available, proceeding without mutex",
+				 __func__);
+	}
+
+	bool is_active = (flow == all_params.active_flow);
+	if (params_mutex) {
+		xSemaphoreGive(params_mutex);
+	} else {
+		ESP_LOGW(TAG,
+				 "%s: params mutex not available, proceeding without mutex",
+				 __func__);
+	}
+
+	if (is_active) {
+		filterParams_t temp_params;
+		temp_params.dspFlow = flow;
+		temp_params.fc_1 = params->fc_1;
+		temp_params.gain_1 = params->gain_1;
+		temp_params.fc_3 = params->fc_3;
+		temp_params.gain_3 = params->gain_3;
+
+		return dsp_processor_update_filter_params(&temp_params);
+	}
+
+	return ESP_OK;
 }
 
 /**
  * Switch to a different DSP flow
  */
 esp_err_t dsp_processor_switch_flow(dspFlows_t flow) {
-  if (flow < 0 || flow >= DSP_FLOW_COUNT) {
-    ESP_LOGE(TAG, "%s: invalid flow %d", __func__, flow);
-    return ESP_ERR_INVALID_ARG;
-  }
-  
-  ESP_LOGI(TAG, "%s: switching from flow %d to %d", __func__, all_params.active_flow, flow);
-  // Set active flow under mutex and capture params to apply
-  if (params_mutex) {
-    xSemaphoreTake(params_mutex, portMAX_DELAY);
-  } else {
-    ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-  }
+	if (flow < 0 || flow >= DSP_FLOW_COUNT) {
+		ESP_LOGE(TAG, "%s: invalid flow %d", __func__, flow);
+		return ESP_ERR_INVALID_ARG;
+	}
 
-  all_params.active_flow = flow;
-  filterParams_t params;
-  params.dspFlow = flow;
-  params.fc_1 = all_params.flow_params[flow].fc_1;
-  params.gain_1 = all_params.flow_params[flow].gain_1;
-  params.fc_3 = all_params.flow_params[flow].fc_3;
-  params.gain_3 = all_params.flow_params[flow].gain_3;
-  if (params_mutex) {
-    xSemaphoreGive(params_mutex);
-  } else {
-    ESP_LOGW(TAG, "%s: params mutex not available, proceeding without mutex", __func__);
-  }
+	ESP_LOGI(TAG, "%s: switching from flow %d to %d", __func__,
+			 all_params.active_flow, flow);
+	// Set active flow under mutex and capture params to apply
+	if (params_mutex) {
+		xSemaphoreTake(params_mutex, portMAX_DELAY);
+	} else {
+		ESP_LOGW(TAG,
+				 "%s: params mutex not available, proceeding without mutex",
+				 __func__);
+	}
 
-  return dsp_processor_update_filter_params(&params);
+	all_params.active_flow = flow;
+	filterParams_t params;
+	params.dspFlow = flow;
+	params.fc_1 = all_params.flow_params[flow].fc_1;
+	params.gain_1 = all_params.flow_params[flow].gain_1;
+	params.fc_3 = all_params.flow_params[flow].fc_3;
+	params.gain_3 = all_params.flow_params[flow].gain_3;
+	if (params_mutex) {
+		xSemaphoreGive(params_mutex);
+	} else {
+		ESP_LOGW(TAG,
+				 "%s: params mutex not available, proceeding without mutex",
+				 __func__);
+	}
+
+	return dsp_processor_update_filter_params(&params);
 }
 
 #endif
