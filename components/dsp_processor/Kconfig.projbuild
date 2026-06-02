@@ -21,17 +21,17 @@ menu "ESP32 DSP processor config"
         help
             Use software volume mixer instead of hardware mixer (when your DAC does not support hardware volume control).
 
-    config SNAPCLIENT_VOLUME_CURVE_POWER
-        float "Volume curve power for perceptually linear volume"
-        default "4.0"
+    config SNAPCLIENT_VOLUME_CURVE_DB_RANGE
+        int "Volume curve range in dB (0=flat, 60=standard, 90=max)"
+        default 60
         depends on USE_DSP_PROCESSOR
-        range(1.0, 5.0)
+        range 0 90
         help
-            Apply exponential volume curve: pow(volume, CURVE_POWER).
-            Human hearing is logarithmic, so this expands the low end
-             (finer control at low volumes) and compresses the high end
-              (less sensitivity near maximum volume).
-            Use 1.0 for linear (no curve), higher values for more expansion at low end.
+            Apply exponential volume curve: y = a * exp(b * x).
+            Human hearing is logarithmic, so this maps slider position
+             [0, 1] to amplitude [10^(-DB/20), 1.0] for
+            perceptually linear loudness. 60 dB is standard for
+            consumer audio. Use 0 for linear (no curve).
 
     config USE_DSP_SOFT_CLIP
         bool "Use cubic soft clipping"

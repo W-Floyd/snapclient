@@ -396,8 +396,8 @@ void app_main(void) {
 #endif
 
 #if CONFIG_USE_DSP_PROCESSOR
-  dsp_processor_init();  // Must init processor first (creates mutexes/semaphores)
-  //dsp_settings_init();   // Then settings can restore params into the processor
+  dsp_processor_init();    // Must init processor first (creates mutexes/semaphores)
+  dsp_settings_init();     // Then settings can restore params into the processor
 #endif
 
   xTaskCreatePinnedToCore(&ota_server_task, "ota", 14 * 256, NULL,

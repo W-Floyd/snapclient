@@ -1,5 +1,5 @@
-idf_component_register(
-    SRCS "dsp_processor_settings.c"
-    INCLUDE_DIRS "include"
-    REQUIRES nvs_flash json dsp_processor
-)
+set(COMPONENT_SRCS "dsp_processor_settings.c")
+list(APPEND COMPONENT_ADD_INCLUDEDIRS "include")
+list(APPEND COMPONENT_ADD_INCLUDEDIRS "../dsp_processor/include")
+set(COMPONENT_REQUIRES nvs_flash json)
+register_component()
