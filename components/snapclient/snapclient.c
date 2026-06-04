@@ -1368,7 +1368,7 @@ int setup_snapserver_control_connection(void) {
 
 	// Use the remote IP stored when the streaming connection was
 	// established
-	if (remote_server_ip.addr == 0) {
+	if (ip_addr_isany(&remote_server_ip)) {
 		ESP_LOGE(TAG, "No streaming connection established yet, cannot setup "
 					  "control connection");
 		netconn_delete(lwipNetconnControl);
