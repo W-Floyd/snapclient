@@ -22,7 +22,6 @@ static const char *NVS_KEY_CHANNEL_MODE = "ch_mode";
 // Mutex for thread-safe NVS access
 static SemaphoreHandle_t dsp_settings_mutex = NULL;
 
-
 /**
  * Generate flow-specific NVS key
  * Format: "flow_<id>_<param>" (e.g., "flow_5_fc_1")
@@ -46,6 +45,22 @@ esp_err_t dsp_settings_init(void) {
 	}
 
 	ESP_LOGI(TAG, "%s: DSP settings manager initialized", __func__);
+
+#ifdef CONFIG_SNAPCLIENT_USE_SOFT_VOL
+	// Load volume curve from NVS now that the mutex exists, before
+	// restoring DSP params. This must happen here (not in dsp_processor_init)
+	// because the NVS helpers require dsp_settings_mutex.
+	float saved_db_range;
+	if (dsp_settings_load_volume_curve_db_range(&saved_db_range) == ESP_OK) {
+		dsp_processor_set_volume_curve_db_range(saved_db_range);
+		ESP_LOGI(TAG, "Restored volume curve from NVS: %.0f dB",
+				 saved_db_range);
+	} else {
+		ESP_LOGI(TAG, "No saved volume curve in NVS, using default (%.0f dB)",
+				 (float)CONFIG_SNAPCLIENT_VOLUME_CURVE_DB_RANGE);
+	}
+#endif
+
 	// Restore DSP parameters into dsp_processor so the processor has the
 	// persisted configuration after both modules are initialized.
 	// Note: caller (main) must initialize dsp_processor before calling
@@ -58,24 +73,31 @@ esp_err_t dsp_settings_init(void) {
 		for (int f = 0; f < DSP_FLOW_COUNT; f++) {
 			filterParams_t params;
 			memset(&params, 0, sizeof(params));
-			if (dsp_settings_get_flow_params((dspFlows_t)f, &params) == ESP_OK) {
-				esp_err_t e = dsp_processor_set_params_for_flow((dspFlows_t)f, &params);
+			if (dsp_settings_get_flow_params((dspFlows_t)f, &params) ==
+				ESP_OK) {
+				esp_err_t e =
+					dsp_processor_set_params_for_flow((dspFlows_t)f, &params);
 				if (e != ESP_OK) {
-					ESP_LOGW(TAG, "%s: Failed to apply params for flow %d: %s", __func__, f, esp_err_to_name(e));
+					ESP_LOGW(TAG, "%s: Failed to apply params for flow %d: %s",
+							 __func__, f, esp_err_to_name(e));
 				} else {
-					ESP_LOGD(TAG, "%s: Restored params for flow %d: fc_1=%.2f gain_1=%.2f fc_3=%.2f gain_3=%.2f", 
-						__func__, f, params.fc_1, params.gain_1, params.fc_3, params.gain_3);
+					ESP_LOGD(TAG,
+							 "%s: Restored params for flow %d: fc_1=%.2f "
+							 "gain_1=%.2f fc_3=%.2f gain_3=%.2f",
+							 __func__, f, params.fc_1, params.gain_1,
+							 params.fc_3, params.gain_3);
 				}
 			} else {
 				ESP_LOGD(TAG, "%s: No stored params for flow %d", __func__, f);
 			}
 		}
 	}
-	
+
 	// Finally, instruct dsp_processor to switch to the active flow
 	esp_err_t se = dsp_processor_switch_flow(active);
 	if (se != ESP_OK) {
-		ESP_LOGW(TAG, "%s: dsp_processor_switch_flow failed: %s", __func__, esp_err_to_name(se));
+		ESP_LOGW(TAG, "%s: dsp_processor_switch_flow failed: %s", __func__,
+				 esp_err_to_name(se));
 	}
 
 	// Restore channel mode
@@ -271,6 +293,16 @@ esp_err_t dsp_settings_get_json(char *json_out, size_t max_len) {
 	// Channel mode (global, not flow-specific)
 	cJSON_AddNumberToObject(root, "channel_mode",
 							(int)dsp_processor_get_channel_mode());
+
+#ifdef CONFIG_SNAPCLIENT_USE_SOFT_VOL
+	// Always emit the current in-memory value; NVS value takes precedence if present
+	float vol_curve = dsp_processor_get_volume_curve_db_range();
+	float saved_vol_curve = -1.0f;
+	if (dsp_settings_load_volume_curve_db_range(&saved_vol_curve) == ESP_OK) {
+		vol_curve = saved_vol_curve;
+	}
+	cJSON_AddNumberToObject(root, "volume_curve_db_range", vol_curve);
+#endif
 
 	// Add flow schema with current values
 	cJSON *schema = cJSON_CreateArray();
@@ -526,6 +558,22 @@ esp_err_t dsp_settings_set_from_json(const char *json_in) {
 		}
 	}
 
+#ifdef CONFIG_SNAPCLIENT_USE_SOFT_VOL
+	// Handle volume curve dB range
+	cJSON *vol_curve = cJSON_GetObjectItem(root, "volume_curve_db_range");
+	if (cJSON_IsNumber(vol_curve)) {
+		float vol_curve_val = (float)vol_curve->valueint;
+		dsp_processor_set_volume_curve_db_range(vol_curve_val);
+		esp_err_t save_err =
+			dsp_settings_save_volume_curve_db_range(vol_curve_val);
+		if (save_err != ESP_OK) {
+			ESP_LOGW(TAG, "%s: Failed to save volume_curve_db_range", __func__);
+			if (err == ESP_OK)
+				err = save_err;
+		}
+	}
+#endif
+
 	// Iterate through all items and save flow parameters
 	// Expecting keys like "flow_5_fc_1", "flow_5_gain_1", etc.
 	cJSON *item = NULL;
@@ -612,7 +660,9 @@ esp_err_t dsp_settings_set_flow_params(dspFlows_t flow,
 		return ESP_ERR_INVALID_ARG;
 	}
 
-	ESP_LOGI(TAG, "Setting params for flow %d: fc_1=%.1f gain_1=%.1f fc_3=%.1f gain_3=%.1f", 
+	ESP_LOGI(TAG,
+			 "Setting params for flow %d: fc_1=%.1f gain_1=%.1f fc_3=%.1f "
+			 "gain_3=%.1f",
 			 flow, params->fc_1, params->gain_1, params->fc_3, params->gain_3);
 
 	// Save to NVS
@@ -627,10 +677,12 @@ esp_err_t dsp_settings_set_flow_params(dspFlows_t flow,
 		// If the flow we just saved is currently active, apply it to the
 		// DSP processor. Read active flow from NVS on demand.
 		dspFlows_t active = dspfStereo;
-		if (dsp_settings_load_active_flow(&active) == ESP_OK && active == flow) {
+		if (dsp_settings_load_active_flow(&active) == ESP_OK &&
+			active == flow) {
 			esp_err_t e = dsp_processor_set_params_for_flow(flow, params);
 			if (e == ESP_OK) {
-				ESP_LOGD(TAG, "Applied params to DSP processor for active flow");
+				ESP_LOGD(TAG,
+						 "Applied params to DSP processor for active flow");
 			} else {
 				ESP_LOGW(TAG, "Failed to apply params to DSP processor: %s",
 						 esp_err_to_name(e));
@@ -659,7 +711,8 @@ esp_err_t dsp_settings_switch_active_flow(dspFlows_t flow) {
 		if (dsp_settings_get_flow_params(flow, &params) == ESP_OK) {
 			esp_err_t e = dsp_processor_set_params_for_flow(flow, &params);
 			if (e != ESP_OK) {
-				ESP_LOGW(TAG, "Failed to set params for flow on DSP processor: %s",
+				ESP_LOGW(TAG,
+						 "Failed to set params for flow on DSP processor: %s",
 						 esp_err_to_name(e));
 			}
 		} else {
@@ -730,6 +783,79 @@ esp_err_t dsp_settings_load_channel_mode(dsp_channel_mode_t *mode) {
 		if (err == ESP_OK) {
 			*mode = (dsp_channel_mode_t)val;
 			ESP_LOGI(TAG, "%s: Loaded channel mode: %d", __func__, (int)*mode);
+		} else if (err != ESP_ERR_NVS_NOT_FOUND) {
+			ESP_LOGW(TAG, "%s: NVS read error: %s", __func__,
+					 esp_err_to_name(err));
+		}
+	}
+
+	xSemaphoreGive(dsp_settings_mutex);
+	return err;
+}
+
+static const char *NVS_KEY_VOLUME_CURVE_DB_RANGE = "vol_crv_db_rng";
+
+esp_err_t dsp_settings_save_volume_curve_db_range(float db_range) {
+	ESP_LOGD(TAG, "%s: db_range=%f", __func__, db_range);
+
+	if (!dsp_settings_mutex)
+		return ESP_ERR_INVALID_STATE;
+
+	if (db_range < 0.0f || db_range > 90.0f) {
+		ESP_LOGW(TAG, "%s: db_range %f out of range (0-90)", __func__,
+				 db_range);
+		return ESP_ERR_INVALID_ARG;
+	}
+
+	if (xSemaphoreTake(dsp_settings_mutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+		return ESP_ERR_TIMEOUT;
+
+	nvs_handle_t h;
+	esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h);
+	if (err != ESP_OK) {
+		xSemaphoreGive(dsp_settings_mutex);
+		ESP_LOGE(TAG, "%s: Failed to open NVS: %s", __func__,
+				 esp_err_to_name(err));
+		return err;
+	}
+
+	// Store as int32 (multiply by 10 for 1 decimal place precision)
+	int32_t val = (int32_t)(db_range * 10.0f);
+	err = nvs_set_i32(h, NVS_KEY_VOLUME_CURVE_DB_RANGE, val);
+	if (err == ESP_OK)
+		err = nvs_commit(h);
+
+	nvs_close(h);
+	xSemaphoreGive(dsp_settings_mutex);
+
+	if (err == ESP_OK)
+		ESP_LOGI(TAG, "%s: Saved volume curve dB range: %f", __func__,
+				 db_range);
+	else
+		ESP_LOGE(TAG, "%s: Failed to save: %s", __func__, esp_err_to_name(err));
+
+	return err;
+}
+
+esp_err_t dsp_settings_load_volume_curve_db_range(float *db_range) {
+	ESP_LOGD(TAG, "%s: entered", __func__);
+
+	if (!db_range || !dsp_settings_mutex)
+		return ESP_ERR_INVALID_ARG;
+
+	if (xSemaphoreTake(dsp_settings_mutex, pdMS_TO_TICKS(5000)) != pdTRUE)
+		return ESP_ERR_TIMEOUT;
+
+	nvs_handle_t h;
+	esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &h);
+	if (err == ESP_OK) {
+		int32_t val = 0;
+		err = nvs_get_i32(h, NVS_KEY_VOLUME_CURVE_DB_RANGE, &val);
+		nvs_close(h);
+		if (err == ESP_OK) {
+			*db_range = (float)val / 10.0f;
+			ESP_LOGI(TAG, "%s: Loaded volume curve dB range: %f", __func__,
+					 *db_range);
 		} else if (err != ESP_ERR_NVS_NOT_FOUND) {
 			ESP_LOGW(TAG, "%s: NVS read error: %s", __func__,
 					 esp_err_to_name(err));
