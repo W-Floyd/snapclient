@@ -140,6 +140,7 @@
       color: #666;
       font-style: italic;
     }
+
     .global-settings {
       display: flex;
       flex-direction: column;
@@ -199,7 +200,7 @@
     async function renderUI() {
       const app = document.getElementById('app');
 
-      // Global settings
+      // Global settings (not flow-specific)
       const chMode = capabilities.channel_mode !== undefined ? capabilities.channel_mode : 0;
       let html = '<div class="global-settings">';
       html += '<div class="parameter-control">';
@@ -209,6 +210,17 @@
       html += `<option value="1" ${chMode === 1 ? 'selected' : ''}>Left Only</option>`;
       html += `<option value="2" ${chMode === 2 ? 'selected' : ''}>Right Only</option>`;
       html += '</select>';
+      html += '</div>';
+      const dbRange = capabilities.volume_curve_db_range !== undefined
+        ? capabilities.volume_curve_db_range : 60;
+      html += '<div class="parameter-control">';
+      html += '<div class="param-info">';
+      html += '<span class="param-name">Volume Curve</span>';
+      html += `<span class="param-value" id="volume_curve_db_range-value">${dbRange.toFixed(0)} dB</span>`;
+      html += '</div>';
+      html += `<input type="range" id="volume_curve_db_range" min="0" max="90" step="1" value="${dbRange}"
+                oninput="handleVolumeCurveChange(this.value)" aria-label="Volume Curve dB Range">`;
+      html += '<div class="range-labels"><span>0 dB (linear)</span><span>90 dB</span></div>';
       html += '</div>';
       html += '</div>';
 
@@ -284,6 +296,18 @@
       }
     }
 
+    // Handle volume curve slider with debouncing
+    let volumeCurveTimer = null;
+    function handleVolumeCurveChange(value) {
+      const span = document.getElementById('volume_curve_db_range-value');
+      if (span) span.textContent = `${parseInt(value, 10)} dB`;
+      if (volumeCurveTimer) clearTimeout(volumeCurveTimer);
+      volumeCurveTimer = setTimeout(() => {
+        setParameter('volume_curve_db_range', parseInt(value, 10));
+        volumeCurveTimer = null;
+      }, 300);
+    }
+
     // Handle parameter value changes with debouncing
     // Debounce timers stored per parameter to avoid flooding the device
     const debounceTimers = {};
@@ -337,6 +361,12 @@
 
     // Flush any pending debounced parameter updates before navigating away
     function flushPendingUpdates() {
+      if (volumeCurveTimer) {
+        clearTimeout(volumeCurveTimer);
+        const slider = document.getElementById('volume_curve_db_range');
+        if (slider) setParameter('volume_curve_db_range', parseInt(slider.value, 10));
+        volumeCurveTimer = null;
+      }
       for (const paramKey of Object.keys(debounceTimers)) {
         clearTimeout(debounceTimers[paramKey]);
         // Get current slider value and send it immediately
