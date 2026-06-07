@@ -19,6 +19,7 @@
 #include "esp_log.h"
 #include "esp_system.h"
 #if CONFIG_SNAPCLIENT_WEB_OTA
+#include "esp_app_desc.h"
 #include "esp_ota_ops.h"
 #endif
 #include "freertos/FreeRTOS.h"
@@ -1058,6 +1059,37 @@ static esp_err_t ota_upload_handler(httpd_req_t *req) {
 
 	return ESP_OK;
 }
+
+/*
+ * GET /api/ota/status handler
+ * Returns running firmware description so the frontend can confirm a
+ * successful OTA by comparing SHA256 before and after the upload.
+ */
+static esp_err_t get_ota_status_handler(httpd_req_t *req) {
+	ESP_LOGD(TAG, "%s: uri=%s", __func__, req->uri);
+
+	set_cors_headers(req);
+	httpd_resp_set_type(req, "application/json");
+
+	const esp_app_desc_t *desc = esp_app_get_description();
+
+	char sha256[65] = {0};
+	for (int i = 0; i < 32; i++) {
+		snprintf(sha256 + i * 2, 3, "%02x", desc->app_elf_sha256[i]);
+	}
+
+	char json[256];
+	snprintf(json, sizeof(json),
+		"{\"version\":\"%s\",\"project_name\":\"%s\","
+		"\"compile_date\":\"%s\",\"compile_time\":\"%s\","
+		"\"idf_version\":\"%s\",\"sha256\":\"%s\"}",
+		desc->version, desc->project_name,
+		desc->date, desc->time,
+		desc->idf_ver, sha256);
+
+	httpd_resp_sendstr(req, json);
+	return ESP_OK;
+}
 #endif /* CONFIG_SNAPCLIENT_WEB_OTA */
 
 /*
@@ -1328,6 +1360,13 @@ esp_err_t start_server(const char *base_path, int port) {
 		.handler = options_handler,
 	};
 	httpd_register_uri_handler(server, &_options_ota_upload_handler);
+
+	httpd_uri_t _get_ota_status_handler = {
+		.uri = "/api/ota/status",
+		.method = HTTP_GET,
+		.handler = get_ota_status_handler,
+	};
+	httpd_register_uri_handler(server, &_get_ota_status_handler);
 #endif /* CONFIG_SNAPCLIENT_WEB_OTA */
 
 	/* URI handler for static files (catch-all, must be last) */

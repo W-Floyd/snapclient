@@ -96,6 +96,34 @@
       margin: 10px 0;
     }
 
+    .info {
+      background-color: #d1ecf1;
+      color: #0c5460;
+      padding: 12px 15px;
+      border-radius: 4px;
+      margin: 10px 0;
+      font-size: 13px;
+    }
+
+    .firmware-meta {
+      font-size: 13px;
+      color: #555;
+      margin-top: 4px;
+    }
+
+    .firmware-meta span {
+      display: inline-block;
+      margin-right: 16px;
+    }
+
+    .sha256 {
+      font-family: monospace;
+      font-size: 11px;
+      color: #888;
+      word-break: break-all;
+      margin-top: 4px;
+    }
+
     .file-input-wrapper {
       margin: 12px 0;
     }
@@ -146,6 +174,12 @@
   <h1>OTA Firmware Update</h1>
 
   <div class="settings-container">
+
+    <div class="setting-control" id="current-firmware-card">
+      <label>Current Firmware</label>
+      <div id="current-firmware-info"><div style="color:#888;font-size:13px;">Loading...</div></div>
+    </div>
+
     <div class="setting-control">
       <label>Upload Firmware</label>
       <div class="description">
@@ -178,6 +212,7 @@
       <strong>Warning:</strong> Do not power off or disconnect the device during the
       update. The device will restart automatically once the new firmware is written.
     </div>
+
   </div>
 
   <script>
@@ -191,21 +226,106 @@
     const progressBar = document.getElementById('progress-bar');
     const progressText = document.getElementById('progress-text');
 
+    const backendUrl = (typeof BACKEND_URL !== 'undefined') ? BACKEND_URL : '';
+
+    let currentSha256 = null;
+
+    function escapeHtml(text) {
+      const d = document.createElement('div');
+      d.textContent = text;
+      return d.innerHTML;
+    }
+
+    function showStatus(html) {
+      statusArea.innerHTML = html;
+    }
+
+    function renderFirmwareInfo(data, labelPrefix) {
+      const version = data.version || '(unknown)';
+      const name = data.project_name || '';
+      const date = data.compile_date || '';
+      const time = data.compile_time || '';
+      const idf = data.idf_version || '';
+      const sha = data.sha256 || '';
+      return '<div class="firmware-meta">'
+        + '<span><strong>' + escapeHtml(labelPrefix ? labelPrefix + ' ' : '') + 'Version:</strong> ' + escapeHtml(version) + '</span>'
+        + (name ? '<span><strong>Project:</strong> ' + escapeHtml(name) + '</span>' : '')
+        + (date ? '<span><strong>Built:</strong> ' + escapeHtml(date) + ' ' + escapeHtml(time) + '</span>' : '')
+        + (idf ? '<span><strong>IDF:</strong> ' + escapeHtml(idf) + '</span>' : '')
+        + '</div>'
+        + (sha ? '<div class="sha256">SHA256: ' + escapeHtml(sha) + '</div>' : '');
+    }
+
+    async function loadCurrentFirmware() {
+      const el = document.getElementById('current-firmware-info');
+      try {
+        const resp = await fetch(backendUrl + '/api/ota/status');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+        currentSha256 = data.sha256 || null;
+        el.innerHTML = renderFirmwareInfo(data, '');
+      } catch (e) {
+        el.innerHTML = '<div style="color:#888;font-size:13px;">Unavailable</div>';
+      }
+    }
+
+    async function pollForRestart() {
+      const maxAttempts = 30;
+      for (let i = 0; i < maxAttempts; i++) {
+        await new Promise(r => setTimeout(r, 2000));
+        const remaining = maxAttempts - i - 1;
+        progressText.textContent = 'Waiting for device to restart… (' + remaining * 2 + 's)';
+        try {
+          const resp = await fetch(backendUrl + '/api/ota/status');
+          if (!resp.ok) continue;
+          const data = await resp.json();
+          progressBar.classList.add('done');
+          progressText.textContent = '';
+
+          const isNew = currentSha256 && data.sha256 && data.sha256 !== currentSha256;
+          const firmwareHtml = renderFirmwareInfo(data, '');
+
+          if (isNew) {
+            showStatus(
+              '<div class="success"><strong>New firmware confirmed running.</strong>'
+              + firmwareHtml + '</div>'
+            );
+          } else {
+            showStatus(
+              '<div class="success"><strong>Device restarted successfully.</strong>'
+              + firmwareHtml + '</div>'
+            );
+          }
+
+          // Refresh the "Current Firmware" card
+          document.getElementById('current-firmware-info').innerHTML = firmwareHtml;
+          currentSha256 = data.sha256 || null;
+
+          uploadBtn.disabled = false;
+          fileInput.disabled = false;
+          return;
+        } catch (e) {
+          // Still restarting — keep polling
+        }
+      }
+
+      progressText.textContent = '';
+      showStatus('<div class="warning">Device did not respond within 60 seconds. It may still be restarting.</div>');
+      uploadBtn.disabled = false;
+      fileInput.disabled = false;
+    }
+
     fileInput.addEventListener('change', function () {
       const file = this.files[0];
       if (file) {
         const kb = (file.size / 1024).toFixed(1);
-        fileInfo.textContent = `Selected: ${file.name} (${kb} KB)`;
+        fileInfo.textContent = 'Selected: ' + file.name + ' (' + kb + ' KB)';
         uploadBtn.disabled = false;
       } else {
         fileInfo.textContent = '';
         uploadBtn.disabled = true;
       }
     });
-
-    function showStatus(html) {
-      statusArea.innerHTML = html;
-    }
 
     function startUpload() {
       const file = fileInput.files[0];
@@ -220,7 +340,6 @@
       progressBar.classList.remove('done');
       progressText.textContent = 'Starting upload…';
 
-      const backendUrl = (typeof BACKEND_URL !== 'undefined') ? BACKEND_URL : '';
       const xhr = new XMLHttpRequest();
       xhr.open('POST', backendUrl + '/api/ota/upload', true);
       xhr.setRequestHeader('Content-Type', 'application/octet-stream');
@@ -235,18 +354,21 @@
         }
       });
 
-      xhr.onload = function () {
+      function onUploadDone() {
         progressBar.style.width = '100%';
-        progressBar.classList.add('done');
+        progressText.textContent = 'Upload complete — waiting for restart…';
+        pollForRestart();
+      }
+
+      xhr.onload = function () {
         if (xhr.status === 200) {
-          progressText.textContent = 'Upload complete — device is restarting…';
-          showStatus('<div class="success">Firmware uploaded successfully. The device will restart in a moment.</div>');
+          onUploadDone();
         } else {
           let msg = 'Upload failed (HTTP ' + xhr.status + ')';
           try {
             const r = JSON.parse(xhr.responseText);
             if (r.error) msg = r.error;
-          } catch (e) { /* ignore parse error */ }
+          } catch (e) { /* ignore */ }
           progressText.textContent = '';
           showStatus('<div class="error">Error: ' + escapeHtml(msg) + '</div>');
           uploadBtn.disabled = false;
@@ -255,12 +377,8 @@
       };
 
       xhr.onerror = function () {
-        // A network error after a successful upload typically means the device
-        // already restarted and dropped the connection — treat as success.
-        progressBar.style.width = '100%';
-        progressBar.classList.add('done');
-        progressText.textContent = 'Connection closed — device is restarting…';
-        showStatus('<div class="success">Firmware uploaded. The device appears to be restarting.</div>');
+        // Connection dropped — device likely restarted during/after upload
+        onUploadDone();
       };
 
       xhr.ontimeout = function () {
@@ -272,11 +390,7 @@
       xhr.send(file);
     }
 
-    function escapeHtml(text) {
-      const d = document.createElement('div');
-      d.textContent = text;
-      return d.innerHTML;
-    }
+    document.addEventListener('DOMContentLoaded', loadCurrentFirmware);
   </script>
 </body>
 </html>
