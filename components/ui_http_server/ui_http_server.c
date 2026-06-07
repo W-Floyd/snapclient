@@ -1051,6 +1051,7 @@ static esp_err_t ota_upload_handler(httpd_req_t *req) {
 	ESP_LOGI(TAG, "%s: OTA complete (%d bytes), restarting...", __func__, received);
 
 	httpd_resp_set_status(req, "200 OK");
+	httpd_resp_set_hdr(req, "Connection", "close");
 	httpd_resp_sendstr(req, "{\"success\": true}");
 
 	xTaskCreate(restart_task, "ota_restart", 2048, NULL, 5, NULL);
