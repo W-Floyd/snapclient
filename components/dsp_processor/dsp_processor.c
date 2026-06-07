@@ -49,7 +49,6 @@ static dsp_all_params_t all_params;
 static ptype_t *filter = NULL;
 
 static double dynamic_vol = 1.0;
-static dsp_channel_mode_t s_channel_mode = DSP_CH_STEREO;
 static double last_slider_position = 1.0;
 
 // Exponential volume curve: y = curve_a * expf(curve_b * x)
@@ -521,32 +520,6 @@ int dsp_processor_worker(char *pcmChnk, uint16_t len, uint32_t samplerate, int c
     }
 #endif
 
-    // Channel routing: duplicate left or right to both outputs.
-    // Lower 16 bits = left channel, upper 16 bits = right channel.
-    if (s_channel_mode != DSP_CH_STEREO && ch == 2) {
-      for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
-        volatile uint32_t *tmp = (uint32_t *)(&audio_tmp[k]);
-        uint32_t max = DSP_PROCESSOR_LEN;
-        uint32_t test = len - k;
-
-        if (test < DSP_PROCESSOR_LEN) {
-          max = test;
-        }
-
-        if (s_channel_mode == DSP_CH_LEFT_ONLY) {
-          for (i = 0; i < max; i++) {
-            uint16_t left = (uint16_t)(tmp[i] & 0xFFFF);
-            tmp[i] = ((uint32_t)left << 16) | left;
-          }
-        } else { // DSP_CH_RIGHT_ONLY
-          for (i = 0; i < max; i++) {
-            uint16_t right = (uint16_t)((tmp[i] >> 16) & 0xFFFF);
-            tmp[i] = ((uint32_t)right << 16) | right;
-          }
-        }
-      }
-    }
-
     switch (dspFlow) {
       case dspfEQBassTreble: {
         for (int k = 0; k < len; k += DSP_PROCESSOR_LEN) {
@@ -846,14 +819,6 @@ void dsp_processor_set_volome(double volume) {
     dynamic_vol = curve;
   }
 }
-dsp_channel_mode_t dsp_processor_get_channel_mode(void) {
-  return s_channel_mode;
-}
-
-void dsp_processor_set_channel_mode(dsp_channel_mode_t mode) {
-  s_channel_mode = mode;
-}
-
 float dsp_processor_get_volume_curve_db_range(void) {
   return volume_curve_db_range;
 }
@@ -873,6 +838,7 @@ void dsp_processor_set_volume_curve_db_range(float db_range) {
     dynamic_vol = new_curve;
   }
 }
+
 
 /**
  * Set parameters for a specific flow (without switching to it)

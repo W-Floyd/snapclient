@@ -7,6 +7,7 @@
 
 #include "cJSON.h"
 #include "dsp_processor.h"
+#include "player.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
@@ -103,7 +104,7 @@ esp_err_t dsp_settings_init(void) {
 	// Restore channel mode
 	dsp_channel_mode_t saved_mode = DSP_CH_STEREO;
 	if (dsp_settings_load_channel_mode(&saved_mode) == ESP_OK) {
-		dsp_processor_set_channel_mode(saved_mode);
+		player_set_channel_mode(saved_mode);
 		ESP_LOGI(TAG, "%s: Restored channel mode from NVS: %d", __func__,
 				 (int)saved_mode);
 	}
@@ -292,7 +293,7 @@ esp_err_t dsp_settings_get_json(char *json_out, size_t max_len) {
 
 	// Channel mode (global, not flow-specific)
 	cJSON_AddNumberToObject(root, "channel_mode",
-							(int)dsp_processor_get_channel_mode());
+							(int)player_get_channel_mode());
 
 #ifdef CONFIG_SNAPCLIENT_USE_SOFT_VOL
 	// Always emit the current in-memory value; NVS value takes precedence if present
@@ -549,7 +550,7 @@ esp_err_t dsp_settings_set_from_json(const char *json_in) {
 	cJSON *ch_mode = cJSON_GetObjectItem(root, "channel_mode");
 	if (cJSON_IsNumber(ch_mode)) {
 		dsp_channel_mode_t mode = (dsp_channel_mode_t)ch_mode->valueint;
-		dsp_processor_set_channel_mode(mode);
+		player_set_channel_mode(mode);
 		esp_err_t save_err = dsp_settings_save_channel_mode(mode);
 		if (save_err != ESP_OK) {
 			ESP_LOGW(TAG, "%s: Failed to save channel_mode", __func__);
