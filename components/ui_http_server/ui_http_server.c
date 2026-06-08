@@ -37,6 +37,8 @@ extern void sc_stop_snapclient(void);
 #include "tas5805m_settings.h"
 #endif
 
+#include "player.h"
+
 static const char *TAG = "UI_HTTP";
 
 static QueueHandle_t xQueueHttp = NULL;
@@ -1449,6 +1451,8 @@ static void http_server_task(void *pvParameters) {
 			if (e != ESP_OK) {
 				ESP_LOGW(TAG, "%s: channel_mode set failed: %s", __func__,
 						 esp_err_to_name(e));
+			} else {
+				player_set_channel_mode((dsp_channel_mode_t)urlBuf.int_value);
 			}
 			continue;
 		}

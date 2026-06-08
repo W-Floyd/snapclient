@@ -109,6 +109,7 @@ static uint32_t i2sDmaBufMaxLen;
 static playerSetting_t *scSet;  // should be used only from http_task
 
 static dsp_channel_mode_t s_channel_mode = DSP_CH_STEREO;
+static QueueHandle_t s_channel_mode_queue = NULL;
 
 static void tg0_timer_init(void);
 static void tg0_timer_deinit(void);
@@ -508,6 +509,7 @@ int init_player(i2s_std_gpio_config_t pin_config0_, i2s_port_t i2sNum_, void (*s
 
   // create message queue to inform task of changed settings
   snapcastSettingQueueHandle = xQueueCreate(1, sizeof(playerSetting_t));
+  s_channel_mode_queue = xQueueCreate(1, sizeof(dsp_channel_mode_t));
 
   if (playerStateMux == NULL) {
     playerStateMux = xSemaphoreCreateMutex();
@@ -701,6 +703,14 @@ int32_t player_latency_insert(int64_t newValue) {
 /**
  *
  */
+int32_t player_set_channel_mode(dsp_channel_mode_t mode) {
+  s_channel_mode = mode;
+  if (s_channel_mode_queue != NULL) {
+    xQueueOverwrite(s_channel_mode_queue, &mode);
+  }
+  return 0;
+}
+
 int32_t player_send_snapcast_setting(playerSetting_t *setting) {
   int ret;
 
@@ -1575,6 +1585,15 @@ static void player_task(void *pvParameters) {
 
       }
 
+    }
+
+    dsp_channel_mode_t new_mode;
+    if (xQueueReceive(s_channel_mode_queue, &new_mode, 0) == pdTRUE && scSet.sr > 0) {
+      s_channel_mode = new_mode;
+      audio_set_mute(true);
+      my_i2s_channel_disable(tx_chan);
+      player_setup_i2s(&scSet, false);
+      initialSync = 0;
     }
 
     if (chnk == NULL) {
