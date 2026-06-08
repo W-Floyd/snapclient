@@ -1224,14 +1224,14 @@ static esp_err_t ota_manifest_check_handler(httpd_req_t *req) {
 	strlcpy(murl, url_item->valuestring, sizeof(murl));
 	cJSON_Delete(root);
 
-	char *body = NULL; int body_len = 0;
-	if (fetch_url_to_buf(murl, &body, &body_len) != ESP_OK) {
+	char *manifest_body = NULL; int manifest_body_len = 0;
+	if (fetch_url_to_buf(murl, &manifest_body, &manifest_body_len) != ESP_OK) {
 		httpd_resp_set_status(req, "502 Bad Gateway");
 		httpd_resp_sendstr(req, "{\"error\": \"Failed to fetch manifest\"}");
 		return ESP_OK;
 	}
-	cJSON *manifest = cJSON_ParseWithLength(body, body_len);
-	free(body);
+	cJSON *manifest = cJSON_ParseWithLength(manifest_body, manifest_body_len);
+	free(manifest_body);
 	if (!manifest) {
 		httpd_resp_set_status(req, "502 Bad Gateway");
 		httpd_resp_sendstr(req, "{\"error\": \"Manifest is not valid JSON\"}");
