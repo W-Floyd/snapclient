@@ -99,7 +99,6 @@ esp_err_t dsp_settings_init(void) {
 		ESP_LOGW(TAG, "%s: dsp_processor_switch_flow failed: %s", __func__,
 				 esp_err_to_name(se));
 	}
-
 	return ESP_OK;
 }
 
