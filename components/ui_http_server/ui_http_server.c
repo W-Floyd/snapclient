@@ -1104,6 +1104,7 @@ static esp_err_t get_ota_status_handler(httpd_req_t *req) {
 	return ESP_OK;
 }
 #if CONFIG_SNAPCLIENT_WEB_OTA_PULL
+#include "esp_crt_bundle.h"
 #define OTA_PULL_BODY_MAX     600
 #define OTA_PULL_URL_MAX      512
 #define OTA_MANIFEST_BODY_MAX 4096
@@ -1113,9 +1114,10 @@ static esp_err_t get_ota_status_handler(httpd_req_t *req) {
 /* Fetches a URL into a heap buffer. Caller must free *out_buf on ESP_OK. */
 static esp_err_t fetch_url_to_buf(const char *url, char **out_buf, int *out_len) {
 	esp_http_client_config_t cfg = {
-		.url         = url,
-		.timeout_ms  = 15000,
-		.buffer_size = 512,
+		.url                = url,
+		.timeout_ms         = 15000,
+		.buffer_size        = 512,
+		.crt_bundle_attach  = esp_crt_bundle_attach,
 	};
 	esp_http_client_handle_t client = esp_http_client_init(&cfg);
 	if (!client) return ESP_ERR_NO_MEM;
@@ -1369,6 +1371,7 @@ static esp_err_t ota_pull_handler(httpd_req_t *req) {
 		.timeout_ms        = 30000,
 		.buffer_size       = OTA_HTTP_CHUNK_SIZE,
 		.keep_alive_enable = false,
+		.crt_bundle_attach = esp_crt_bundle_attach,
 	};
 	esp_http_client_handle_t client = esp_http_client_init(&http_cfg);
 	if (!client) {
