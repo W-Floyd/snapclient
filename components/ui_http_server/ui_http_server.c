@@ -1176,38 +1176,53 @@ static esp_err_t validate_ota_first_chunk(const char *buf, int len, bool force) 
 }
 
 /*
- * GET /api/ota/manifest?url=<manifest_url>
- * Fetches and parses the remote manifest JSON, returns it alongside the
- * running firmware version so the browser can show a diff before flashing.
+ * POST /api/ota/manifest  (body handled below)
+ */
+/*
+ * POST /api/ota/manifest
+ * Body: {"url":"<manifest_url>"}
+ * Fetches and parses the manifest JSON, returns it alongside the running
+ * firmware version so the browser can show a diff before flashing.
+ * Uses POST + JSON body (same as /api/ota/pull) to avoid URL encoding issues
+ * with query parameters.
  */
 static esp_err_t ota_manifest_check_handler(httpd_req_t *req) {
 	ESP_LOGD(TAG, "%s: uri=%s", __func__, req->uri);
 	set_cors_headers(req);
 	httpd_resp_set_type(req, "application/json");
 
-	size_t qlen = httpd_req_get_url_query_len(req);
-	if (qlen == 0) {
+	int body_len = req->content_len;
+	if (body_len <= 0 || body_len > OTA_PULL_BODY_MAX) {
 		httpd_resp_set_status(req, "400 Bad Request");
-		httpd_resp_sendstr(req, "{\"error\": \"Missing url query parameter\"}");
+		httpd_resp_sendstr(req, "{\"error\": \"Missing or oversized request body\"}");
 		return ESP_OK;
 	}
-	char *query = malloc(qlen + 1);
-	if (!query || httpd_req_get_url_query_str(req, query, qlen + 1) != ESP_OK) {
-		free(query);
+	char *req_body = malloc(body_len + 1);
+	if (!req_body) {
 		httpd_resp_set_status(req, "500 Internal Server Error");
-		httpd_resp_sendstr(req, "{\"error\": \"Failed to read query string\"}");
+		httpd_resp_sendstr(req, "{\"error\": \"Memory allocation failed\"}");
 		return ESP_OK;
 	}
-	char murl_enc[OTA_PULL_URL_MAX + 1] = {0};
-	esp_err_t qerr = httpd_query_key_value(query, "url", murl_enc, sizeof(murl_enc));
-	free(query);
-	if (qerr != ESP_OK) {
+	int recvd = httpd_req_recv(req, req_body, body_len);
+	req_body[recvd > 0 ? recvd : 0] = '\0';
+
+	cJSON *root = cJSON_ParseWithLength(req_body, recvd > 0 ? recvd : 0);
+	free(req_body);
+	if (!root) {
 		httpd_resp_set_status(req, "400 Bad Request");
-		httpd_resp_sendstr(req, "{\"error\": \"Missing url parameter\"}");
+		httpd_resp_sendstr(req, "{\"error\": \"Invalid JSON body\"}");
 		return ESP_OK;
 	}
-	char murl[OTA_PULL_URL_MAX + 1] = {0};
-	httpd_uri_decode(murl, murl_enc, sizeof(murl) - 1);
+	cJSON *url_item = cJSON_GetObjectItemCaseSensitive(root, "url");
+	if (!cJSON_IsString(url_item) || !url_item->valuestring || !url_item->valuestring[0]) {
+		cJSON_Delete(root);
+		httpd_resp_set_status(req, "400 Bad Request");
+		httpd_resp_sendstr(req, "{\"error\": \"Missing or invalid \\\"url\\\" field\"}");
+		return ESP_OK;
+	}
+	char murl[OTA_PULL_URL_MAX + 1];
+	strlcpy(murl, url_item->valuestring, sizeof(murl));
+	cJSON_Delete(root);
 
 	char *body = NULL; int body_len = 0;
 	if (fetch_url_to_buf(murl, &body, &body_len) != ESP_OK) {
@@ -1750,7 +1765,7 @@ esp_err_t start_server(const char *base_path, int port) {
 #if CONFIG_SNAPCLIENT_WEB_OTA_PULL
 	httpd_uri_t _ota_manifest_check_handler = {
 		.uri = "/api/ota/manifest",
-		.method = HTTP_GET,
+		.method = HTTP_POST,
 		.handler = ota_manifest_check_handler,
 	};
 	httpd_register_uri_handler(server, &_ota_manifest_check_handler);
