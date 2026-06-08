@@ -143,6 +143,7 @@ esp_err_t dsp_settings_save_volume_curve_db_range(float db_range);
  */
 esp_err_t dsp_settings_load_volume_curve_db_range(float *db_range);
 
+
 #ifdef __cplusplus
 }
 #endif
