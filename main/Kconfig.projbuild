@@ -50,6 +50,38 @@ menu "Snapclient Configuration"
 			help
 				Expose a /api/ota/upload endpoint and an OTA Update tab in the web UI.
 				Disable to reduce firmware size or restrict update access.
+
+		config SNAPCLIENT_WEB_OTA_PULL
+			bool "Enable pull OTA (device fetches firmware from URL)"
+			default y
+			depends on SNAPCLIENT_WEB_OTA
+			help
+				Expose a POST /api/ota/pull endpoint. The device downloads firmware
+				directly from a URL, validates it (magic word + project name check),
+				and flashes it. Disable to restrict OTA to local uploads only.
+
+		config SNAPCLIENT_OTA_PULL_URL
+			string "Default OTA manifest URL"
+			default ""
+			depends on SNAPCLIENT_WEB_OTA_PULL
+			help
+				Manifest URL pre-populated in the web UI. Leave empty for no default.
+				Can always be overridden at runtime via the UI.
+
+				Expected manifest JSON format:
+				  {
+				    "version":       "1.3.0",
+				    "url":           "https://example.com/firmware.bin",
+				    "sha256":        "abc123...",
+				    "release_notes": "Fixed Wi-Fi reconnect bug"
+				  }
+
+				Fields: "url" is required; "version", "sha256", and
+				"release_notes" are optional but recommended.
+				"sha256" is logged and displayed in the UI; integrity is
+				ultimately enforced by esp_ota_end() which re-reads the
+				flashed partition and verifies the SHA-256 appended to
+				every ESP-IDF image by the build system.
 	endmenu
 
 	config USE_SAMPLE_INSERTION
