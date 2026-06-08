@@ -7,12 +7,13 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/semphr.h"
+#include "dsp_types.h"
+#include "esp_log.h"
 
 #if CONFIG_USE_DSP_PROCESSOR
 #include "dsp_processor.h"
 #include "dsps_biquad.h"
 #include "dsps_biquad_gen.h"
-#include "esp_log.h"
 #include "player.h"
 
 typedef struct ptype {
@@ -840,7 +841,6 @@ void dsp_processor_set_volume_curve_db_range(float db_range) {
 }
 
 
-
 /**
  * Set parameters for a specific flow (without switching to it)
  */
@@ -930,3 +930,4 @@ esp_err_t dsp_processor_switch_flow(dspFlows_t flow) {
 }
 
 #endif
+

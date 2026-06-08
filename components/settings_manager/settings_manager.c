@@ -528,7 +528,6 @@ esp_err_t settings_set_wifi_tx_power(int32_t power_raw) {
 esp_err_t settings_get_channel_mode(int32_t *mode) {
     if (!mode) return ESP_ERR_INVALID_ARG;
     if (!hostname_mutex) return ESP_ERR_INVALID_STATE;
-
     if (xSemaphoreTake(hostname_mutex, pdMS_TO_TICKS(5000)) != pdTRUE) return ESP_ERR_TIMEOUT;
 
     nvs_handle_t h;
@@ -607,6 +606,7 @@ esp_err_t settings_get_json(char *json_out, size_t max_len) {
         cJSON_AddNumberToObject(root, "wifi_tx_power", tx_power);
     }
 #endif
+
 
     // Get channel mode
     int32_t ch_mode = 0;
