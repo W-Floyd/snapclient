@@ -1109,7 +1109,7 @@ static esp_err_t get_ota_status_handler(httpd_req_t *req) {
 #define OTA_PULL_URL_MAX      512
 #define OTA_MANIFEST_BODY_MAX 4096
 #define OTA_APP_DESC_MAGIC    0xABCD5432u
-#define OTA_APP_DESC_PROJ_OFF 48
+#define OTA_APP_DESC_PROJ_OFF 40
 
 /* Fetches a URL into a heap buffer. Caller must free *out_buf on ESP_OK. */
 static esp_err_t fetch_url_to_buf(const char *url, char **out_buf, int *out_len) {
@@ -1560,6 +1560,9 @@ esp_err_t start_server(const char *base_path, int port) {
 	config.max_open_sockets = 7;
 	config.max_uri_handlers = 64;
 	config.lru_purge_enable = true; // Enable LRU socket purging
+	/* Pull OTA makes outbound HTTPS connections (mbedtls handshake ~6 KB stack)
+	 * on top of our 1 KB+ of local variables; raise from the 4 KB default. */
+	config.stack_size = 10240;
 
 	/* Enable wildcard URI matching for static file handler */
 	config.uri_match_fn = httpd_uri_match_wildcard;
