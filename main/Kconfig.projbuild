@@ -55,6 +55,8 @@ menu "Snapclient Configuration"
 			bool "Enable pull OTA (device fetches firmware from URL)"
 			default y
 			depends on SNAPCLIENT_WEB_OTA
+			select MBEDTLS_CERTIFICATE_BUNDLE
+			select MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_CMN
 			help
 				Expose a POST /api/ota/pull endpoint. The device downloads firmware
 				directly from a URL, validates it (magic word + project name check),
