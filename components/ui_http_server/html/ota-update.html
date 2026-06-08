@@ -34,7 +34,7 @@
       box-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 
-    .setting-control label {
+    .setting-control > label {
       display: block;
       font-weight: bold;
       margin-bottom: 10px;
@@ -75,14 +75,9 @@
       border-bottom: 2px solid #e9ecef;
     }
 
-    .firmware-card.card-new .card-title {
-      border-bottom-color: #007bff;
-    }
+    .firmware-card.card-new .card-title { border-bottom-color: #007bff; }
 
-    .firmware-meta {
-      font-size: 13px;
-      color: #555;
-    }
+    .firmware-meta { font-size: 13px; color: #555; }
 
     .firmware-meta .meta-row {
       display: flex;
@@ -112,11 +107,7 @@
     .sha256-match { color: #28a745; font-weight: bold; }
     .sha256-diff  { color: #dc3545; font-weight: bold; }
 
-    .placeholder {
-      font-size: 13px;
-      color: #aaa;
-      font-style: italic;
-    }
+    .placeholder { font-size: 13px; color: #aaa; font-style: italic; }
 
     .btn {
       padding: 10px 20px;
@@ -127,20 +118,27 @@
       transition: background-color 0.3s;
     }
 
-    .btn-primary { background-color: #007bff; color: white; }
-    .btn-primary:hover { background-color: #0056b3; }
+    .btn-primary  { background-color: #007bff; color: white; }
+    .btn-primary:hover  { background-color: #0056b3; }
     .btn-primary:disabled { background-color: #6c757d; cursor: not-allowed; }
+
+    .btn-danger   { background-color: #dc3545; color: white; }
+    .btn-danger:hover   { background-color: #a71d2a; }
+    .btn-danger:disabled { background-color: #6c757d; cursor: not-allowed; }
+
+    .btn-secondary { background-color: #6c757d; color: white; }
+    .btn-secondary:hover { background-color: #545b62; }
 
     .error   { background-color: #f8d7da; color: #721c24; padding: 15px; border-radius: 4px; margin: 10px 0; }
     .success { background-color: #d4edda; color: #155724; padding: 15px; border-radius: 4px; margin: 10px 0; }
     .warning { background-color: #fff3cd; color: #856404; padding: 15px; border-radius: 4px; margin: 10px 0; }
+    .info    { background-color: #d1ecf1; color: #0c5460; padding: 15px; border-radius: 4px; margin: 10px 0; }
 
     .file-input-wrapper { margin: 12px 0; }
 
     input[type="file"] { font-size: 14px; padding: 6px 0; }
 
-    .file-info { font-size: 13px; color: #555; margin-top: 4px; }
-
+    .file-info   { font-size: 13px; color: #555; margin-top: 4px; }
     .parse-error { font-size: 13px; color: #856404; margin-top: 6px; }
 
     .progress-container { display: none; margin-top: 14px; }
@@ -150,6 +148,7 @@
       border-radius: 4px;
       height: 22px;
       overflow: hidden;
+      position: relative;
     }
 
     .progress-bar {
@@ -157,15 +156,114 @@
       height: 100%;
       width: 0%;
       transition: width 0.2s ease;
+      position: relative;
     }
 
     .progress-bar.done { background: #28a745; }
+
+    .progress-bar.indeterminate {
+      width: 35% !important;
+      transition: none;
+      animation: indeterminate-slide 1.4s infinite ease-in-out;
+    }
+
+    @keyframes indeterminate-slide {
+      0%   { margin-left: -35%; }
+      100% { margin-left: 100%; }
+    }
 
     .progress-text {
       text-align: center;
       font-size: 13px;
       color: #555;
       margin-top: 6px;
+    }
+
+    .url-input {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 14px;
+      padding: 8px 10px;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      margin: 12px 0 4px;
+    }
+
+    .url-input:focus {
+      outline: none;
+      border-color: #007bff;
+      box-shadow: 0 0 0 2px rgba(0,123,255,0.15);
+    }
+
+    /* Manifest preview card */
+    .manifest-preview {
+      margin-top: 16px;
+      border: 1px solid #dee2e6;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .manifest-preview-header {
+      background: #f8f9fa;
+      padding: 10px 16px;
+      font-weight: bold;
+      font-size: 14px;
+      border-bottom: 1px solid #dee2e6;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .version-badge {
+      font-size: 12px;
+      padding: 2px 8px;
+      border-radius: 12px;
+      font-weight: normal;
+    }
+
+    .version-badge.new     { background: #cce5ff; color: #004085; }
+    .version-badge.current { background: #d4edda; color: #155724; }
+
+    .manifest-preview-body { padding: 14px 16px; }
+
+    .manifest-row {
+      display: flex;
+      font-size: 13px;
+      margin-bottom: 6px;
+      gap: 8px;
+    }
+
+    .manifest-key {
+      color: #888;
+      min-width: 90px;
+      flex-shrink: 0;
+    }
+
+    .manifest-val {
+      color: #333;
+      font-weight: 500;
+      word-break: break-all;
+    }
+
+    .manifest-sha { font-family: monospace; font-size: 11px; color: #777; }
+
+    .manifest-notes {
+      margin-top: 10px;
+      padding: 10px 12px;
+      background: #f8f9fa;
+      border-radius: 4px;
+      font-size: 13px;
+      color: #555;
+      border-left: 3px solid #007bff;
+    }
+
+    .manifest-actions {
+      padding: 12px 16px;
+      border-top: 1px solid #dee2e6;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
     }
   </style>
 </head>
@@ -185,6 +283,7 @@
       </div>
     </div>
 
+    <!-- Upload section -->
     <div class="setting-control">
       <label>Upload Firmware</label>
       <div class="description">
@@ -192,7 +291,7 @@
         flash the new firmware, and restart automatically.
       </div>
 
-      <div id="status-area"></div>
+      <div id="upload-status-area"></div>
 
       <div class="file-input-wrapper">
         <input type="file" id="firmware-file" accept=".bin">
@@ -200,17 +299,60 @@
         <div id="parse-error" class="parse-error"></div>
       </div>
 
-      <div class="progress-container" id="progress-container">
+      <div class="progress-container" id="upload-progress-container">
         <div class="progress-bar-bg">
-          <div class="progress-bar" id="progress-bar"></div>
+          <div class="progress-bar" id="upload-progress-bar"></div>
         </div>
-        <div class="progress-text" id="progress-text"></div>
+        <div class="progress-text" id="upload-progress-text"></div>
       </div>
 
       <div style="margin-top: 16px;">
         <button class="btn btn-primary" id="upload-btn" disabled onclick="startUpload()">
           Upload Firmware
         </button>
+      </div>
+    </div>
+
+    <!-- Pull / manifest section — shown only when device reports pull_enabled:true -->
+    <div class="setting-control" id="pull-section" style="display:none">
+      <label>Update from Manifest</label>
+      <div class="description">
+        Enter the URL of a firmware manifest JSON file. The device will fetch
+        the manifest, check the version, then download and flash the binary
+        listed in it. Integrity is verified by <code>esp_ota_end()</code>
+        which re-reads the flashed partition and checks the SHA-256 appended
+        to every ESP-IDF image by the build system.
+      </div>
+
+      <div id="pull-status-area"></div>
+
+      <input type="url" id="pull-url" class="url-input"
+             placeholder="https://example.com/firmware.json">
+
+      <div style="margin-top: 8px;">
+        <button class="btn btn-primary" id="pull-check-btn" onclick="checkManifest()">
+          Check for Update
+        </button>
+      </div>
+
+      <!-- Manifest preview — shown after a successful check -->
+      <div id="manifest-preview" class="manifest-preview" style="display:none">
+        <div class="manifest-preview-header" id="manifest-preview-header">
+          Available Update
+        </div>
+        <div class="manifest-preview-body" id="manifest-preview-body"></div>
+        <div class="manifest-actions">
+          <button class="btn btn-primary"  id="manifest-flash-btn"       onclick="startPull(false)" style="display:none">Flash Now</button>
+          <button class="btn btn-danger"   id="manifest-force-flash-btn" onclick="startPull(true)"  style="display:none">Force Flash</button>
+          <button class="btn btn-secondary" onclick="closePreview()">Cancel</button>
+        </div>
+      </div>
+
+      <div class="progress-container" id="pull-progress-container">
+        <div class="progress-bar-bg">
+          <div class="progress-bar" id="pull-progress-bar"></div>
+        </div>
+        <div class="progress-text" id="pull-progress-text"></div>
       </div>
     </div>
 
@@ -226,7 +368,6 @@
 
     const ESP_APP_DESC_MAGIC = 0xABCD5432;
 
-    // Offsets within esp_app_desc_t from the magic word
     const OFF_SECURE_VER  =   4;
     const OFF_VERSION     =  16;
     const OFF_PROJ_NAME   =  48;
@@ -236,29 +377,23 @@
     const OFF_SHA256      = 144;
     const STRUCT_SIZE     = 256;
 
-    const fileInput      = document.getElementById('firmware-file');
-    const uploadBtn      = document.getElementById('upload-btn');
-    const fileInfo       = document.getElementById('file-info');
-    const parseError     = document.getElementById('parse-error');
-    const statusArea     = document.getElementById('status-area');
-    const progressContainer = document.getElementById('progress-container');
-    const progressBar    = document.getElementById('progress-bar');
-    const progressText   = document.getElementById('progress-text');
+    const fileInput   = document.getElementById('firmware-file');
+    const uploadBtn   = document.getElementById('upload-btn');
+    const fileInfo    = document.getElementById('file-info');
+    const parseError  = document.getElementById('parse-error');
 
     const backendUrl = (typeof BACKEND_URL !== 'undefined') ? BACKEND_URL : '';
 
-    let currentSha256  = null;
-    let selectedDesc   = null;
+    let currentSha256 = null;
+    let selectedDesc  = null;
 
-    // ── Utilities ────────────────────────────────────────────────────────────
+    // ── Utilities ─────────────────────────────────────────────────────────────
 
     function escapeHtml(text) {
       const d = document.createElement('div');
       d.textContent = String(text);
       return d.innerHTML;
     }
-
-    function showStatus(html) { statusArea.innerHTML = html; }
 
     function readNullTermString(bytes, offset, maxLen) {
       const slice = bytes.subarray(offset, offset + maxLen);
@@ -276,11 +411,8 @@
     function parseEspAppDesc(buffer) {
       const bytes = new Uint8Array(buffer);
       const view  = new DataView(buffer);
-
-      // Scan for magic word (little-endian), aligned to 4 bytes
       for (let i = 0; i + STRUCT_SIZE <= bytes.length; i += 4) {
         if (view.getUint32(i, true) !== ESP_APP_DESC_MAGIC) continue;
-
         return {
           secure_version: view.getUint32(i + OFF_SECURE_VER, true),
           version:        readNullTermString(bytes, i + OFF_VERSION,   32),
@@ -298,37 +430,32 @@
 
     function renderMeta(desc, showShaLabel = true) {
       if (!desc) return '<div class="placeholder">Unknown</div>';
-
       const rows = [
-        ['Version',  desc.version      || '—'],
-        ['Project',  desc.project_name || '—'],
-        ['Built',    desc.compile_date + ' ' + desc.compile_time],
-        ['IDF',      desc.idf_version  || '—'],
+        ['Version', desc.version      || '—'],
+        ['Project', desc.project_name || '—'],
+        ['Built',   (desc.compile_date + ' ' + desc.compile_time).trim()],
+        ['IDF',     desc.idf_version  || '—'],
       ];
-
       let html = '<div class="firmware-meta">';
       for (const [k, v] of rows) {
         html += '<div class="meta-row">'
           + '<span class="meta-key">' + k + '</span>'
-          + '<span class="meta-val">'  + escapeHtml(v.trim()) + '</span>'
+          + '<span class="meta-val">' + escapeHtml(v.trim()) + '</span>'
           + '</div>';
       }
       html += '</div>';
-
       if (desc.sha256) {
         const match = currentSha256 && desc.sha256 === currentSha256;
         const cls   = (showShaLabel && currentSha256) ? (match ? 'sha256-match' : 'sha256-diff') : '';
         const label = cls === 'sha256-match' ? ' ✓ same as running'
-                    : cls === 'sha256-diff'  ? ' ✗ different'
-                    : '';
+                    : cls === 'sha256-diff'  ? ' ✗ different' : '';
         html += '<div class="sha256-row"><span class="' + cls + '">'
               + escapeHtml(desc.sha256) + label + '</span></div>';
       }
-
       return html;
     }
 
-    // ── Load current firmware from device ────────────────────────────────────
+    // ── Load current firmware ─────────────────────────────────────────────────
 
     async function loadCurrentFirmware() {
       const el = document.getElementById('info-current');
@@ -338,9 +465,14 @@
         const data = await resp.json();
         currentSha256 = data.sha256 || null;
         el.innerHTML = renderMeta(data, false);
-        // Re-render selected card now that we have currentSha256 for comparison
         if (selectedDesc) {
           document.getElementById('info-selected').innerHTML = renderMeta(selectedDesc);
+        }
+        if (data.pull_enabled) {
+          const section = document.getElementById('pull-section');
+          if (section) section.style.display = '';
+          const urlInput = document.getElementById('pull-url');
+          if (urlInput && data.pull_url) urlInput.value = data.pull_url;
         }
       } catch (e) {
         el.innerHTML = '<div class="placeholder">Unavailable</div>';
@@ -353,18 +485,15 @@
       const file = this.files[0];
       parseError.textContent = '';
       selectedDesc = null;
-
       if (!file) {
         fileInfo.textContent = '';
         uploadBtn.disabled = true;
         document.getElementById('info-selected').innerHTML = '<div class="placeholder">No file selected</div>';
         return;
       }
-
       const kb = (file.size / 1024).toFixed(1);
       fileInfo.textContent = file.name + ' — ' + kb + ' KB';
       uploadBtn.disabled = false;
-
       const reader = new FileReader();
       reader.onload = function (e) {
         const desc = parseEspAppDesc(e.target.result);
@@ -379,9 +508,9 @@
       reader.readAsArrayBuffer(file);
     });
 
-    // ── Upload + post-flash polling ───────────────────────────────────────────
+    // ── Shared restart polling ────────────────────────────────────────────────
 
-    async function pollForRestart() {
+    async function waitForRestart(progressText, onDone) {
       const maxAttempts = 30;
       for (let i = 0; i < maxAttempts; i++) {
         await new Promise(r => setTimeout(r, 2000));
@@ -390,51 +519,28 @@
           const resp = await fetch(backendUrl + '/api/ota/status');
           if (!resp.ok) continue;
           const data = await resp.json();
-
-          progressBar.classList.add('done');
-          progressText.textContent = '';
-
-          const isNew    = currentSha256 && data.sha256 && data.sha256 !== currentSha256;
-          const isFailed = currentSha256 && data.sha256 && data.sha256 === currentSha256;
-          const meta  = renderMeta(data);
-          currentSha256 = data.sha256 || null;
-
-          showStatus(isNew
-            ? '<div class="success"><strong>New firmware confirmed running.</strong>' + meta + '</div>'
-            : isFailed
-              ? '<div class="error"><strong>OTA update failed — device is running the previous firmware.</strong>' + meta + '</div>'
-              : '<div class="warning"><strong>Device restarted — unable to verify firmware (no baseline).</strong>'  + meta + '</div>');
-
-          // Refresh both cards
-          document.getElementById('info-current').innerHTML  = renderMeta(data, false);
-          document.getElementById('info-selected').innerHTML = '<div class="placeholder">No file selected</div>';
-          selectedDesc = null;
-          fileInput.value = '';
-          fileInfo.textContent = '';
-
-          uploadBtn.disabled = true;
-          fileInput.disabled = false;
+          onDone(null, data);
           return;
-        } catch (e) {
-          // Still restarting
-        }
+        } catch (e) { /* still restarting */ }
       }
-
-      progressText.textContent = '';
-      showStatus('<div class="warning">Device did not respond within 60 seconds. It may still be restarting.</div>');
-      uploadBtn.disabled = false;
-      fileInput.disabled = false;
+      onDone(new Error('timeout'), null);
     }
+
+    // ── Upload ────────────────────────────────────────────────────────────────
 
     function startUpload() {
       const file = fileInput.files[0];
       if (!file) return;
 
+      const statusArea   = document.getElementById('upload-status-area');
+      const progressCont = document.getElementById('upload-progress-container');
+      const progressBar  = document.getElementById('upload-progress-bar');
+      const progressText = document.getElementById('upload-progress-text');
+
       uploadBtn.disabled = true;
       fileInput.disabled = true;
-      showStatus('');
-
-      progressContainer.style.display = 'block';
+      statusArea.innerHTML = '';
+      progressCont.style.display = 'block';
       progressBar.style.width = '0%';
       progressBar.classList.remove('done');
       progressText.textContent = 'Starting upload…';
@@ -445,41 +551,266 @@
 
       xhr.upload.addEventListener('progress', function (e) {
         if (e.lengthComputable) {
-          const pct      = Math.round((e.loaded / e.total) * 100);
-          const loadedKB = (e.loaded / 1024).toFixed(0);
-          const totalKB  = (e.total  / 1024).toFixed(0);
+          const pct = Math.round((e.loaded / e.total) * 100);
           progressBar.style.width = pct + '%';
-          progressText.textContent = 'Uploading: ' + pct + '% (' + loadedKB + ' / ' + totalKB + ' KB)';
+          progressText.textContent = 'Uploading: ' + pct + '% ('
+            + (e.loaded / 1024).toFixed(0) + ' / '
+            + (e.total  / 1024).toFixed(0) + ' KB)';
         }
       });
 
-      function onUploadDone() {
+      function afterUpload() {
         progressBar.style.width = '100%';
         progressText.textContent = 'Upload complete — waiting for restart…';
-        pollForRestart();
+        waitForRestart(progressText, function (err, data) {
+          progressBar.classList.add('done');
+          progressText.textContent = '';
+          if (err) {
+            statusArea.innerHTML = '<div class="warning">Device did not respond within 60 seconds. It may still be restarting.</div>';
+          } else {
+            const isNew    = currentSha256 && data.sha256 && data.sha256 !== currentSha256;
+            const isFailed = currentSha256 && data.sha256 && data.sha256 === currentSha256;
+            currentSha256  = data.sha256 || null;
+            statusArea.innerHTML = isNew
+              ? '<div class="success"><strong>New firmware confirmed running.</strong>' + renderMeta(data) + '</div>'
+              : isFailed
+                ? '<div class="error"><strong>OTA update failed — device is running the previous firmware.</strong>' + renderMeta(data) + '</div>'
+                : '<div class="warning"><strong>Device restarted — unable to verify firmware (no baseline).</strong>' + renderMeta(data) + '</div>';
+            document.getElementById('info-current').innerHTML  = renderMeta(data, false);
+            document.getElementById('info-selected').innerHTML = '<div class="placeholder">No file selected</div>';
+            selectedDesc = null;
+            fileInput.value = '';
+            fileInfo.textContent = '';
+          }
+          uploadBtn.disabled = true;
+          fileInput.disabled = false;
+        });
       }
 
       xhr.onload = function () {
         if (xhr.status === 200) {
-          onUploadDone();
+          afterUpload();
         } else {
           let msg = 'Upload failed (HTTP ' + xhr.status + ')';
           try { const r = JSON.parse(xhr.responseText); if (r.error) msg = r.error; } catch (e) { /* ignore */ }
           progressText.textContent = '';
-          showStatus('<div class="error">Error: ' + escapeHtml(msg) + '</div>');
+          statusArea.innerHTML = '<div class="error">Error: ' + escapeHtml(msg) + '</div>';
           uploadBtn.disabled = false;
           fileInput.disabled = false;
         }
       };
-
-      xhr.onerror   = onUploadDone; // connection dropped = device restarted
+      xhr.onerror   = afterUpload;
       xhr.ontimeout = function () {
-        showStatus('<div class="error">Error: Upload timed out.</div>');
+        statusArea.innerHTML = '<div class="error">Error: Upload timed out.</div>';
         uploadBtn.disabled = false;
         fileInput.disabled = false;
       };
-
       xhr.send(file);
+    }
+
+    // ── Manifest check ────────────────────────────────────────────────────────
+
+    let lastManifestData = null;
+
+    function closePreview() {
+      document.getElementById('manifest-preview').style.display = 'none';
+      lastManifestData = null;
+    }
+
+    async function checkManifest() {
+      const url = document.getElementById('pull-url').value.trim();
+      if (!url) {
+        document.getElementById('pull-status-area').innerHTML =
+          '<div class="error">Please enter a manifest URL.</div>';
+        return;
+      }
+
+      const checkBtn = document.getElementById('pull-check-btn');
+      const statusArea = document.getElementById('pull-status-area');
+      const preview = document.getElementById('manifest-preview');
+
+      checkBtn.disabled = true;
+      statusArea.innerHTML = '';
+      preview.style.display = 'none';
+      lastManifestData = null;
+
+      try {
+        const resp = await fetch(backendUrl + '/api/ota/manifest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
+        if (!resp.ok) {
+          let msg = 'Check failed (HTTP ' + resp.status + ')';
+          try { const r = await resp.json(); if (r.error) msg = r.error; } catch (e) { /* ignore */ }
+          statusArea.innerHTML = '<div class="error">Error: ' + escapeHtml(msg) + '</div>';
+          checkBtn.disabled = false;
+          return;
+        }
+        const data = await resp.json();
+        lastManifestData = data;
+        renderManifestPreview(data);
+        preview.style.display = '';
+      } catch (e) {
+        statusArea.innerHTML = '<div class="error">Error: ' + escapeHtml(e.message || 'Request failed') + '</div>';
+      }
+      checkBtn.disabled = false;
+    }
+
+    function renderManifestPreview(data) {
+      const m = data.manifest || {};
+      const updateAvailable = data.update_available;
+      const currentVer = data.current_version || '?';
+      const manifestVer = m.version || null;
+
+      /* Header */
+      const header = document.getElementById('manifest-preview-header');
+      if (updateAvailable) {
+        const arrow = manifestVer ? escapeHtml(currentVer) + ' → <strong>' + escapeHtml(manifestVer) + '</strong>' : 'Update available';
+        header.innerHTML = 'Available Update &nbsp;<span class="version-badge new">' + arrow + '</span>';
+      } else {
+        header.innerHTML = 'Already up to date &nbsp;<span class="version-badge current">v' + escapeHtml(currentVer) + '</span>';
+      }
+
+      /* Body */
+      const body = document.getElementById('manifest-preview-body');
+      let html = '';
+      if (m.version)  html += row('Version',  escapeHtml(m.version));
+      if (m.url)      html += row('Binary',   '<span style="word-break:break-all">' + escapeHtml(m.url) + '</span>');
+      if (m.sha256)   html += row('SHA-256',  '<span class="manifest-sha">' + escapeHtml(m.sha256) + '</span>');
+      if (m.release_notes) {
+        html += '<div class="manifest-notes">' + escapeHtml(m.release_notes) + '</div>';
+      }
+      body.innerHTML = html || '<div class="placeholder">No metadata in manifest</div>';
+
+      /* Action buttons */
+      const flashBtn      = document.getElementById('manifest-flash-btn');
+      const forceFlashBtn = document.getElementById('manifest-force-flash-btn');
+      if (updateAvailable) {
+        flashBtn.style.display = '';
+        forceFlashBtn.style.display = 'none';
+      } else {
+        flashBtn.style.display = 'none';
+        forceFlashBtn.style.display = '';
+        forceFlashBtn.textContent = 'Force Flash (already on v' + escapeHtml(currentVer) + ')';
+      }
+    }
+
+    function row(key, valHtml) {
+      return '<div class="manifest-row">'
+        + '<span class="manifest-key">' + key + '</span>'
+        + '<span class="manifest-val">' + valHtml + '</span>'
+        + '</div>';
+    }
+
+    // ── Pull / flash ──────────────────────────────────────────────────────────
+
+    async function startPull(force) {
+      const url = document.getElementById('pull-url').value.trim();
+      if (!url) return;
+
+      const checkBtn     = document.getElementById('pull-check-btn');
+      const flashBtn     = document.getElementById('manifest-flash-btn');
+      const forceFlashBtn = document.getElementById('manifest-force-flash-btn');
+      const cancelBtn    = document.querySelector('#manifest-preview .manifest-actions .btn-secondary');
+      const statusArea   = document.getElementById('pull-status-area');
+      const progressCont = document.getElementById('pull-progress-container');
+      const progressBar  = document.getElementById('pull-progress-bar');
+      const progressText = document.getElementById('pull-progress-text');
+
+      checkBtn.disabled     = true;
+      flashBtn.disabled     = true;
+      forceFlashBtn.disabled = true;
+      if (cancelBtn) cancelBtn.disabled = true;
+      statusArea.innerHTML = '';
+      progressCont.style.display = 'block';
+      progressBar.classList.remove('done', 'indeterminate');
+      progressBar.style.width = '35%';
+      progressBar.classList.add('indeterminate');
+      progressText.textContent = 'Sending manifest URL to device…';
+
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3 * 60 * 1000);
+
+      const body = { url };
+      if (force) body.force = true;
+
+      try {
+        const resp = await fetch(backendUrl + '/api/ota/pull', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: controller.signal,
+        });
+        clearTimeout(timeout);
+        progressBar.classList.remove('indeterminate');
+
+        const result = await resp.json().catch(() => ({}));
+
+        if (result.up_to_date) {
+          progressCont.style.display = 'none';
+          statusArea.innerHTML = '<div class="info">Already running v'
+            + escapeHtml(result.version || '?') + ' — no update needed.</div>';
+          checkBtn.disabled = false;
+          flashBtn.disabled = false;
+          forceFlashBtn.disabled = false;
+          if (cancelBtn) cancelBtn.disabled = false;
+          return;
+        }
+
+        if (!resp.ok) {
+          const msg = result.error || 'Pull failed (HTTP ' + resp.status + ')';
+          progressCont.style.display = 'none';
+          statusArea.innerHTML = '<div class="error">Error: ' + escapeHtml(msg) + '</div>';
+          checkBtn.disabled = false;
+          flashBtn.disabled = false;
+          forceFlashBtn.disabled = false;
+          if (cancelBtn) cancelBtn.disabled = false;
+          return;
+        }
+
+        progressBar.style.width = '100%';
+        progressText.textContent = 'Flash complete — waiting for restart…';
+      } catch (e) {
+        clearTimeout(timeout);
+        progressBar.classList.remove('indeterminate');
+        if (e.name === 'AbortError') {
+          progressCont.style.display = 'none';
+          statusArea.innerHTML = '<div class="error">Error: Request timed out after 3 minutes.</div>';
+          checkBtn.disabled = false;
+          flashBtn.disabled = false;
+          forceFlashBtn.disabled = false;
+          if (cancelBtn) cancelBtn.disabled = false;
+          return;
+        }
+        progressBar.style.width = '100%';
+        progressText.textContent = 'Connection dropped — waiting for restart…';
+      }
+
+      document.getElementById('manifest-preview').style.display = 'none';
+
+      waitForRestart(progressText, function (err, data) {
+        progressBar.classList.add('done');
+        progressText.textContent = '';
+        if (err) {
+          statusArea.innerHTML = '<div class="warning">Device did not respond within 60 seconds. It may still be restarting.</div>';
+        } else {
+          const isNew    = currentSha256 && data.sha256 && data.sha256 !== currentSha256;
+          const isFailed = currentSha256 && data.sha256 && data.sha256 === currentSha256;
+          currentSha256  = data.sha256 || null;
+          statusArea.innerHTML = isNew
+            ? '<div class="success"><strong>New firmware confirmed running.</strong>' + renderMeta(data) + '</div>'
+            : isFailed
+              ? '<div class="error"><strong>OTA update failed — device is running the previous firmware.</strong>' + renderMeta(data) + '</div>'
+              : '<div class="warning"><strong>Device restarted — unable to verify firmware (no baseline).</strong>' + renderMeta(data) + '</div>';
+          document.getElementById('info-current').innerHTML = renderMeta(data, false);
+        }
+        checkBtn.disabled = false;
+        flashBtn.disabled = false;
+        forceFlashBtn.disabled = false;
+        if (cancelBtn) cancelBtn.disabled = false;
+        lastManifestData = null;
+      });
     }
 
     document.addEventListener('DOMContentLoaded', loadCurrentFirmware);
