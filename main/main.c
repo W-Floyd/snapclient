@@ -33,8 +33,6 @@
 #include "network_interface.h"
 #include "nvs_flash.h"
 
-#include "esp32_udp_logger.h"
-
 // Web socket server
 // #include "websocket_if.h"
 // #include "websocket_server.h"
@@ -1817,11 +1815,6 @@ void app_main(void) {
   }
   ESP_LOGI(TAG, "Device hostname: %s", mdns_hostname);
   
-  #if CONFIG_ESP32_UDP_LOGGER_ENABLED
-//  esp32_udp_logger_set_hostname(mdns_hostname);
-  esp32_udp_logger_autostart();
-  #endif
-
   init_http_server_task();
 
   // Enable websocket server
