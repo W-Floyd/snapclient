@@ -87,6 +87,7 @@ int32_t player_latency_insert(int64_t newValue);
 int32_t get_diff_to_server(int64_t *tDiff, int64_t now);
 int32_t latency_buffer_full(bool *is_full);
 
+int32_t player_set_channel_mode(dsp_channel_mode_t mode);
 int32_t player_send_snapcast_setting(playerSetting_t *setting);
 
 int32_t reset_latency_buffer(void);

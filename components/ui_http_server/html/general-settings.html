@@ -277,20 +277,17 @@
       // Channel mode setting
       html += '<div class="setting-control">';
       html += '<label for="channel-mode">Channel Mode</label>';
-      html += '<div class="description">Select which audio channel is routed to both outputs. Takes effect after restart.</div>';
+      html += '<div class="description">Select which audio channel is routed to both outputs. Applied immediately.</div>';
       html += `<select id="channel-mode" onchange="handleChannelModeChange(this.value)">`;
       html += `<option value="0" ${currentChannelMode === 0 ? 'selected' : ''}>Stereo</option>`;
       html += `<option value="1" ${currentChannelMode === 1 ? 'selected' : ''}>Left Only</option>`;
       html += `<option value="2" ${currentChannelMode === 2 ? 'selected' : ''}>Right Only</option>`;
       html += '</select>';
-      html += '<div class="button-group">';
-      html += '<button class="btn btn-danger" id="restart-btn-channel" onclick="requestRestart()" style="background-color:#e74c3c;" disabled>Restart to apply</button>';
-      html += '</div>';
       html += '</div>';
 
       // Info message
       html += '<div class="info">';
-      html += '<strong>Note:</strong> After changing the settings, you will need to restart the device for the changes to take effect.';
+      html += '<strong>Note:</strong> Channel mode is applied immediately. Other settings take effect after restart.';
       html += '</div>';
       
       app.innerHTML = html;
@@ -390,8 +387,6 @@
       try {
         await setParameter('channel_mode', mode);
         currentChannelMode = mode;
-        const btn = document.getElementById('restart-btn-channel');
-        if (btn) btn.disabled = false;
       } catch (err) {
         alert('Failed to save channel mode');
       }
