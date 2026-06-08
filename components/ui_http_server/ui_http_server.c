@@ -1445,7 +1445,7 @@ static void http_server_task(void *pvParameters) {
 			continue;
 		}
 
-		// Handle channel mode (global, not flow-specific)
+		// Handle channel mode (global I2S routing, not DSP-specific)
 		if (strcmp(urlBuf.key, "channel_mode") == 0) {
 			esp_err_t e = settings_set_channel_mode((int32_t)urlBuf.int_value);
 			if (e != ESP_OK) {
@@ -1468,7 +1468,6 @@ static void http_server_task(void *pvParameters) {
 				ESP_LOGW(TAG, "%s: volume_curve_db_range set failed: %s",
 						 __func__, esp_err_to_name(e));
 			}
-#endif
 			continue;
 		}
 

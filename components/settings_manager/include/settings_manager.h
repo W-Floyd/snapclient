@@ -47,7 +47,7 @@ esp_err_t settings_get_wifi_tx_power(int32_t *power_raw);
 esp_err_t settings_set_wifi_tx_power(int32_t power_raw);
 #endif
 
-/* Channel routing mode (0=stereo, 1=left only, 2=right only) */
+/* I2S channel routing mode (0=stereo, 1=left only, 2=right only) */
 esp_err_t settings_get_channel_mode(int32_t *mode);
 esp_err_t settings_set_channel_mode(int32_t mode);
 
