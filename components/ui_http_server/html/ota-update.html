@@ -635,7 +635,11 @@
       lastManifestData = null;
 
       try {
-        const resp = await fetch(backendUrl + '/api/ota/manifest?url=' + encodeURIComponent(url));
+        const resp = await fetch(backendUrl + '/api/ota/manifest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url }),
+        });
         if (!resp.ok) {
           let msg = 'Check failed (HTTP ' + resp.status + ')';
           try { const r = await resp.json(); if (r.error) msg = r.error; } catch (e) { /* ignore */ }
