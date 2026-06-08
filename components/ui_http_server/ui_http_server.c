@@ -1468,6 +1468,7 @@ static void http_server_task(void *pvParameters) {
 				ESP_LOGW(TAG, "%s: volume_curve_db_range set failed: %s",
 						 __func__, esp_err_to_name(e));
 			}
+#endif
 			continue;
 		}
 
