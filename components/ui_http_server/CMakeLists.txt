@@ -12,4 +12,4 @@ idf_component_register(SRCS "ui_http_server.c"
                                       html/dac-settings.html
                                       html/eq-settings.html
                                       html/ota-update.html
-                       EMBED_FILES html/favicon.ico)
+                       EMBED_FILES html/favicon.svg)

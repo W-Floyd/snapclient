@@ -59,8 +59,8 @@ extern const uint8_t eq_settings_html_end[] asm("_binary_eq_settings_html_end");
 extern const uint8_t ota_update_html_start[] asm("_binary_ota_update_html_start");
 extern const uint8_t ota_update_html_end[] asm("_binary_ota_update_html_end");
 #endif
-extern const uint8_t favicon_ico_start[] asm("_binary_favicon_ico_start");
-extern const uint8_t favicon_ico_end[] asm("_binary_favicon_ico_end");
+extern const uint8_t favicon_svg_start[] asm("_binary_favicon_svg_start");
+extern const uint8_t favicon_svg_end[] asm("_binary_favicon_svg_end");
 
 // Structure to map URI paths to embedded files
 typedef struct {
@@ -83,7 +83,7 @@ static const embedded_file_t embedded_files[] = {
 #if CONFIG_SNAPCLIENT_WEB_OTA
 	{"/ota-update.html", ota_update_html_start, ota_update_html_end, "text/html; charset=utf-8"},
 #endif
-	{"/favicon.ico", favicon_ico_start, favicon_ico_end, "image/x-icon"},
+	{"/favicon.svg", favicon_svg_start, favicon_svg_end, "image/svg+xml"},
 };
 
 /**
