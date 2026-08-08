@@ -1517,6 +1517,9 @@ static void player_task(void *pvParameters) {
   playerSetting_t scSet;
   uint64_t timer_val;
   int initialSync = 0;
+  // Set once the pcm queue has actually held a chunk. Until then an empty
+  // queue is startup, not an underrun, and must not trigger a hard resync.
+  bool queueEverFilled = false;
   int dir = 0;
   int32_t dir_insert_sample = 0;
   int64_t insertedSamplesCounter = 0;
@@ -1648,6 +1651,9 @@ static void player_task(void *pvParameters) {
 
           pcmChkQHdl = xQueueCreate(entries, sizeof(pcm_chunk_message_t *));
 
+          // fresh queue, give it time to fill before an empty queue counts
+          queueEverFilled = false;
+
           ESP_LOGI(TAG, "created new queue with %d", entries);
         }
 
@@ -1690,6 +1696,8 @@ static void player_task(void *pvParameters) {
           pcm_chunk_message_t *stale;
           while (xQueueReceive(pcmChkQHdl, &stale, 0) == pdTRUE)
             free_pcm_chunk(stale);
+          // deliberate drain, so the refill gets the same grace as at startup
+          queueEverFilled = false;
         }
         s_i2s_mode = cur_mode;
       }
@@ -1851,6 +1859,9 @@ static void player_task(void *pvParameters) {
           my_gptimer_stop(gptimer);
 
           int msgWaiting = uxQueueMessagesWaiting(pcmChkQHdl);
+          if (msgWaiting > 0) {
+            queueEverFilled = true;
+          }
 
           int64_t now_us = esp_timer_get_time();
           if (now_us - s_last_resync_log_us >= 1000000LL) {
@@ -1864,8 +1875,13 @@ static void player_task(void *pvParameters) {
                      heap_caps_get_largest_free_block(MALLOC_CAP_32BIT), ap.rssi, msgWaiting);
           }
                    
-          // get count of chunks we are late for
+          // get count of chunks we are late for, but never discard more than
+          // the queue holds — at a large age that would flush everything and
+          // guarantee msgWaiting == 0 on the next pass, latching the resync
           uint32_t c = ceil((float)age / (float)chunkDuration_us);  // round up
+          if (c > (uint32_t)msgWaiting) {
+            c = (uint32_t)msgWaiting;
+          }
 
           // now clear all those chunks which are probably late too
           while (c--) {
@@ -1876,6 +1892,11 @@ static void player_task(void *pvParameters) {
             } else {
               break;
             }
+          }
+
+          // if that emptied the queue, treat the refill like startup again
+          if (uxQueueMessagesWaiting(pcmChkQHdl) == 0) {
+            queueEverFilled = false;
           }
 
           dir = 0;
@@ -2114,10 +2135,13 @@ static void player_task(void *pvParameters) {
           miniMedian = MEDIANFILTER_Insert(&miniMedianFilter, age);
 
           int msgWaiting = uxQueueMessagesWaiting(pcmChkQHdl);
+          if (msgWaiting > 0) {
+            queueEverFilled = true;
+          }
 
           // resync hard if we are getting very late / early.
           // rest gets tuned in through apll speed control or sample insertion
-          if ((msgWaiting == 0) ||
+          if (((msgWaiting == 0) && queueEverFilled) ||
               (MEDIANFILTER_isFull(&shortMedianFilter, 0) &&
                ((shortMedian > hardResyncThreshold) ||
                 (shortMedian < -hardResyncThreshold)))) 
@@ -2150,6 +2174,10 @@ static void player_task(void *pvParameters) {
             initialSync = 0;
 
             insertedSamplesCounter = 0;
+
+            // one underrun costs one resync; the queue has to refill before an
+            // empty queue may trigger another one
+            queueEverFilled = false;
 
             continue;
           }
