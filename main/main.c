@@ -1785,7 +1785,7 @@ void app_main(void) {
 
   int32_t channel_mode_raw = 0;
   settings_get_channel_mode(&channel_mode_raw);
-  if (channel_mode_raw < DSP_CH_STEREO || channel_mode_raw > DSP_CH_RIGHT_ONLY) {
+  if (channel_mode_raw < DSP_CH_STEREO || channel_mode_raw >= DSP_CH_MODE_MAX) {
     ESP_LOGW(TAG, "Invalid channel_mode %ld in NVS, defaulting to stereo", channel_mode_raw);
     channel_mode_raw = DSP_CH_STEREO;
   }
